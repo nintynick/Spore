@@ -420,12 +420,19 @@ def _copy_workspace_file():
             console.print(f"  Copied [cyan]{filename}[/] to working directory.")
 
 
+def _data_is_ready() -> bool:
+    """Check if training data and tokenizer are fully prepared."""
+    cache_dir = Path("~/.cache/autoresearch").expanduser()
+    tokenizer = cache_dir / "tokenizer" / "tokenizer.pkl"
+    data_dir = cache_dir / "data"
+    return tokenizer.exists() and data_dir.exists() and any(data_dir.iterdir())
+
+
 def _prepare_data_only():
     """Run prepare.py if data isn't ready. Safe to call from a thread."""
     import subprocess
 
-    cache_dir = Path("~/.cache/autoresearch").expanduser()
-    if cache_dir.exists() and any(cache_dir.iterdir()):
+    if _data_is_ready():
         console.print("[dim]Data already prepared, skipping.[/]")
         return
 
