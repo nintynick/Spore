@@ -78,6 +78,14 @@ class LLMClient:
 
     def chat(self, system: str, user: str) -> str:
         """Send a chat completion request. Returns the assistant's response text."""
+        log.info("LLM request: %s %s", self.config.provider, self.model)
+
+        if self.config.provider == "anthropic":
+            return self._chat_anthropic(system, user)
+        return self._chat_openai(system, user)
+
+    def _chat_openai(self, system: str, user: str) -> str:
+        """OpenAI-compatible chat completions (OpenAI, Groq, xAI, custom)."""
         url = f"{self.base_url}/chat/completions"
         payload = {
             "model": self.model,
@@ -88,7 +96,6 @@ class LLMClient:
                 {"role": "user", "content": user},
             ],
         }
-        log.info("LLM request: %s %s", self.config.provider, self.model)
         resp = self.session.post(url, json=payload, timeout=120)
         resp.raise_for_status()
         data = resp.json()
@@ -99,6 +106,36 @@ class LLMClient:
             "LLM response: %d prompt + %d completion tokens",
             usage.get("prompt_tokens", 0),
             usage.get("completion_tokens", 0),
+        )
+        return content
+
+    def _chat_anthropic(self, system: str, user: str) -> str:
+        """Native Anthropic Messages API."""
+        url = f"{self.base_url}/messages"
+        headers = {
+            "x-api-key": self.config.api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        }
+        payload = {
+            "model": self.model,
+            "max_tokens": self.config.max_token,
+            "temperature": self.config.temperature,
+            "system": system,
+            "messages": [{"role": "user", "content": user}],
+        }
+        resp = requests.post(url, json=payload, headers=headers, timeout=120)
+        resp.raise_for_status()
+        data = resp.json()
+
+        content = "".join(
+            block["text"] for block in data["content"] if block["type"] == "text"
+        )
+        usage = data.get("usage", {})
+        log.info(
+            "LLM response: %d prompt + %d completion tokens",
+            usage.get("input_tokens", 0),
+            usage.get("output_tokens", 0),
         )
         return content
 
