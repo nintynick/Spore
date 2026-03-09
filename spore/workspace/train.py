@@ -623,12 +623,23 @@ FINAL_LR_FRAC = 0.0  # final LR as fraction of initial
 
 # Model size
 DEPTH = 8  # number of transformer layers
-if _USE_CUDA:
-    DEVICE_BATCH_SIZE = 128
-elif _DEVICE.type == "mps":
-    DEVICE_BATCH_SIZE = 16
-else:
-    DEVICE_BATCH_SIZE = 4
+
+
+def _auto_batch_size():
+    """Pick batch size based on available memory."""
+    if _USE_CUDA:
+        mem_gb = torch.cuda.get_device_properties(0).total_mem / (1024**3)
+        # ~128 for 80GB (H100), scale linearly down, minimum 8
+        bs = max(8, int(128 * mem_gb / 80))
+        # Round down to power of 2 for clean grad accumulation
+        bs = 2 ** (bs.bit_length() - 1)
+        return bs
+    if _DEVICE.type == "mps":
+        return 16
+    return 4
+
+
+DEVICE_BATCH_SIZE = _auto_batch_size()
 
 # Resource scaling: SPORE_RESOURCE env var (1-100 percent of batch size)
 _resource_pct = int(os.environ.get("SPORE_RESOURCE", "100"))
