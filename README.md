@@ -11,10 +11,10 @@ Based on Karpathy's [autoresearch](https://github.com/karpathy/autoresearch) —
 ```bash
 pip install sporemesh
 spore set groq <your-api-key>
-spore run --bootstrap
+spore run --genesis
 ```
 
-That's it. `--bootstrap` copies the bundled `train.py` and `prepare.py` into your working directory, downloads data, connects to the bootstrap peer, syncs the graph, and starts the experiment loop. Your identity, database, and config live in `~/.spore/`.
+That's it. `--genesis` copies the bundled `train.py` and `prepare.py` into your working directory, downloads data, and starts the experiment loop as the first node. Your identity, database, and config live in `~/.spore/`.
 
 ## Installation
 
@@ -42,7 +42,7 @@ Requires Python 3.11+. Training works on CUDA, MPS (Apple Silicon), and CPU. No 
 |---------|-------------|
 | `spore set <provider> <key>` | Configure LLM (groq, anthropic, openai, xai) |
 | `spore run` | Run node in foreground (Ctrl+C to stop) |
-| `spore run --bootstrap` | Full setup: auto-prepare data, connect, train |
+| `spore run --genesis` | Genesis node: auto-prepare data, skip peer, train |
 | `spore run --resource N` | Limit resource usage to N% (1-100, default 100) |
 | `spore run --no-train` | Run as sync-only node (no experiments) |
 | `spore start` | Run node as a background daemon |
@@ -121,7 +121,7 @@ spore/
 ├── query.py        # CLI query commands (status, graph, frontier, info)
 ├── wrapper.py      # Autoresearch integration (import result)
 ├── workspace/
-│   ├── train.py    # Bundled training script (copied to CWD by --bootstrap)
+│   ├── train.py    # Bundled training script (copied to CWD by --genesis)
 │   └── prepare.py  # Bundled data preparation script
 └── explorer/
     ├── server.py   # FastAPI + WebSocket server

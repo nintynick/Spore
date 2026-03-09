@@ -1,8 +1,6 @@
 """Tests for ArtifactStore — content-addressed storage."""
 
 
-
-
 class TestArtifactStore:
     def test_put_and_get(self, store):
         data = b"hello world"

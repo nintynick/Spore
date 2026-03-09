@@ -1,6 +1,5 @@
 """Tests for Verifier — tolerance bands, reputation, challenges, disputes."""
 
-
 from test.conftest import make_record
 
 from spore.record import Status

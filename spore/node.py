@@ -192,10 +192,13 @@ class SporeNode:
             except Exception:
                 log.exception("Listener callback failed")
 
-    async def start(self):
+    async def start(self, *, skip_peer: bool = False):
         """Start the gossip server and connect to peers."""
         (self.data_dir / "db").mkdir(parents=True, exist_ok=True)
         await self.gossip.start()
+
+        if skip_peer:
+            return
 
         # Build peer list: configured + persisted + bootstrap (deduplicated)
         all_peer = list(

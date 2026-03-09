@@ -41,9 +41,9 @@ def register_command(cli: click.Group):
         "--no-train", is_flag=True, help="Sync-only mode (no experiment runner)"
     )
     @click.option(
-        "--bootstrap",
+        "--genesis",
         is_flag=True,
-        help="Full self-contained setup (auto-prepare data)",
+        help="Genesis node: auto-prepare data, skip peer connection",
     )
     @click.option(
         "--resource",
@@ -59,7 +59,7 @@ def register_command(cli: click.Group):
         port: int,
         peer: tuple[str, ...],
         no_train: bool,
-        bootstrap: bool,
+        genesis: bool,
         resource: int,
         data_dir: str | None,
     ):
@@ -82,8 +82,8 @@ def register_command(cli: click.Group):
             cmd.extend(["--peer", p])
         if no_train:
             cmd.append("--no-train")
-        if bootstrap:
-            cmd.append("--bootstrap")
+        if genesis:
+            cmd.append("--genesis")
         if resource != 100:
             cmd.extend(["--resource", str(resource)])
         if data_dir:

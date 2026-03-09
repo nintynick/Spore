@@ -32,18 +32,20 @@ _USE_CUDA = _DEVICE.type == "cuda"
 _USE_COMPILE = _USE_CUDA  # torch.compile only reliable on CUDA for now
 
 # Attention backend: FA3 on CUDA, PyTorch SDPA elsewhere
+fa3 = None
 if _USE_CUDA:
-    from kernels import get_kernel
+    try:
+        from kernels import get_kernel
 
-    cap = torch.cuda.get_device_capability()
-    repo = (
-        "varunneal/flash-attention-3"
-        if cap == (9, 0)
-        else "kernels-community/flash-attn3"
-    )
-    fa3 = get_kernel(repo).flash_attn_interface
-else:
-    fa3 = None
+        cap = torch.cuda.get_device_capability()
+        repo = (
+            "varunneal/flash-attention-3"
+            if cap >= (9, 0)  # Hopper (9.0) and Blackwell (12.0)+
+            else "kernels-community/flash-attn3"
+        )
+        fa3 = get_kernel(repo).flash_attn_interface
+    except Exception:
+        fa3 = None
 
 
 def _sync():

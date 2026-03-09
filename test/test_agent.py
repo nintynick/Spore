@@ -1,6 +1,5 @@
 """Tests for AgentCoordinator — experiment selection and context building."""
 
-
 from test.conftest import make_record
 
 from spore.agent import AgentCoordinator, CoordinatorConfig

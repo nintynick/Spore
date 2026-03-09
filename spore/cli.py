@@ -62,7 +62,9 @@ def init():
 @click.option("--peer", "-c", multiple=True, help="Peer address (host:port)")
 @click.option("--no-train", is_flag=True, help="Sync-only mode (no experiment runner)")
 @click.option(
-    "--bootstrap", is_flag=True, help="Full self-contained setup (auto-prepare data)"
+    "--genesis",
+    is_flag=True,
+    help="Genesis node: auto-prepare data, skip peer connection",
 )
 @click.option(
     "--resource",
@@ -78,7 +80,7 @@ def run(
     port: int,
     peer: tuple[str, ...],
     no_train: bool,
-    bootstrap: bool,
+    genesis: bool,
     resource: int,
     data_dir: str | None,
 ):
@@ -86,8 +88,8 @@ def run(
 
     Starts gossip + experiment loop. The node selects frontier experiments,
     calls the configured LLM for proposals, runs training, and publishes results.
-    Use --no-train for sync-only mode. Use --bootstrap for full self-contained
-    setup (auto-runs prepare.py if data is missing). Configure LLM with `spore set`.
+    Use --no-train for sync-only mode. Use --genesis for first node setup
+    (auto-runs prepare.py, skips peer connection). Configure LLM with `spore set`.
     """
     _configure_logging()
     data_path = Path(data_dir).expanduser() if data_dir else SPORE_DIR
@@ -105,8 +107,8 @@ def run(
 
     os.environ["SPORE_RESOURCE"] = str(resource)
 
-    # Auto-prepare data if --bootstrap
-    if bootstrap:
+    # Auto-prepare data if --genesis
+    if genesis:
         _auto_prepare()
 
     # Determine training mode
@@ -128,7 +130,7 @@ def run(
     _print_banner(node, port, config.peer, mode, resource)
 
     async def _run():
-        await node.start()
+        await node.start(skip_peer=genesis)
         try:
             if should_train:
                 from .loop import ExperimentLoop

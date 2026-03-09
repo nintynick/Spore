@@ -31,7 +31,7 @@ Every existing decentralized ML project (Bittensor, Gensyn, Petals, Prime Intell
 ```bash
 pip install sporemesh
 spore set groq <your-api-key>
-spore run --bootstrap
+spore run --genesis
 ```
 
 ## Key File
@@ -39,7 +39,7 @@ spore run --bootstrap
 - `spec/protocol.md` — full protocol specification
 - `spore/record.py` — ExperimentRecord dataclass
 - `spore/graph.py` — research DAG (SQLite-backed)
-- `spore/node.py` — network node with bootstrap + peer persistence
+- `spore/node.py` — network node with genesis mode + peer persistence
 - `spore/gossip.py` — TCP gossip protocol with PEX (peer exchange)
 - `spore/loop.py` — autonomous experiment loop (LLM → train → keep/discard)
 - `spore/llm.py` — multi-provider LLM client (Groq, Anthropic, OpenAI, xAI)
@@ -48,7 +48,7 @@ spore run --bootstrap
 - `spore/verify.py` — tolerance band, reputation scoring, dispute resolution
 - `spore/challenge.py` — challenge protocol coordinator (spot-check → dispute)
 - `spore/cli.py` — CLI interface (run, set, clean, status, explorer, etc.)
-- `spore/workspace/` — bundled train.py + prepare.py (copied by --bootstrap)
+- `spore/workspace/` — bundled train.py + prepare.py (copied by `--genesis`)
 
 ## Build Path
 

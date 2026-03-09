@@ -141,13 +141,15 @@ After connecting to a peer, a node requests its peer list:
 
 This allows the network to grow organically — connecting to one peer discovers the rest.
 
-### 4.6 Bootstrap
+### 4.6 Peer Discovery
 
 Nodes discover the network via:
-1. **Hardcoded bootstrap peer**: `peer.sporemesh.com:7470` (used when no peers are configured)
+1. **Bootstrap peer**: `peer.sporemesh.com:7470` (used when no peers are configured and not in genesis mode)
 2. **Persisted known peer**: `~/.spore/known_peer` (peers from previous sessions)
 3. **PEX**: peer lists received from connected peers
 4. **Manual config**: `spore connect <host:port>` or `--peer` flag
+
+Genesis mode (`--genesis`) skips all peer connection — use this when starting the first node in a new network.
 
 NAT'd nodes (e.g., laptops behind a router) can connect outbound to public peers and participate fully. They receive all gossip through their outbound connections. Port forwarding is only needed to accept inbound connections from other peers.
 
