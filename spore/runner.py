@@ -111,7 +111,9 @@ class ExperimentRunner:
                     if cur_speed:
                         grid.add_row("Speed", cur_speed)
                     grid.add_row("Epoch", str(cur_epoch))
-                return Panel(grid, title="[bold]Experiment[/]", border_style="blue", expand=False)
+                return Panel(
+                    grid, title="[bold]Experiment[/]", border_style="blue", expand=False
+                )
 
             assert proc.stdout is not None
             with Live(
@@ -161,7 +163,9 @@ class ExperimentRunner:
                             log_output="\n".join(output_lines),
                         )
 
-                progress.update(task_id, completed=self.time_budget, pct="100%", eta="0s")
+                progress.update(
+                    task_id, completed=self.time_budget, pct="100%", eta="0s"
+                )
 
             proc.wait()
             elapsed = time.time() - start_time
@@ -188,14 +192,23 @@ class ExperimentRunner:
                 result_text.append("  vram ", style="dim")
                 result_text.append(f"{parsed.peak_vram_mb:.0f}MB", style="cyan")
                 result_text.append(f"  {elapsed:.0f}s", style="dim")
-                console.print(Panel(result_text, title="[bold green]Complete[/]", border_style="green", expand=False))
+                console.print(
+                    Panel(
+                        result_text,
+                        title="[bold green]Complete[/]",
+                        border_style="green",
+                        expand=False,
+                    )
+                )
             else:
-                console.print(Panel(
-                    f"[red]{parsed.error or 'Unknown error'}[/]",
-                    title="[bold red]Failed[/]",
-                    border_style="red",
-                    expand=False,
-                ))
+                console.print(
+                    Panel(
+                        f"[red]{parsed.error or 'Unknown error'}[/]",
+                        title="[bold red]Failed[/]",
+                        border_style="red",
+                        expand=False,
+                    )
+                )
 
             return parsed
 

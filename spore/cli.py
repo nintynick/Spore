@@ -246,13 +246,16 @@ def explorer(port: int, web_port: int, peer: tuple[str, ...]):
         except OSError as e:
             if "address already in use" not in str(e).lower():
                 raise
-            daemon_pid = is_running()
-            if not daemon_pid:
-                raise
             node.gossip.port = 0
             await node.gossip.start()
             await node.gossip.connect_to_peer("127.0.0.1", port)
-            console.print(f"  [dim]Attached to daemon (PID {daemon_pid}) on :{port}[/]")
+            daemon_pid = is_running()
+            if daemon_pid:
+                console.print(
+                    f"  [dim]Attached to daemon (PID {daemon_pid}) on :{port}[/]"
+                )
+            else:
+                console.print(f"  [dim]Attached to existing node on :{port}[/]")
 
         if config.peer:
             console.print(f"  Peer:   {', '.join(config.peer)}")
@@ -408,7 +411,14 @@ def _print_banner(
     grid.add_row("Mode", f"[bold]{mode}[/]")
 
     console.print()
-    console.print(Panel(grid, title=f"[bold]Spore[/] [dim]v{ver}[/]", border_style="cyan", expand=False))
+    console.print(
+        Panel(
+            grid,
+            title=f"[bold]Spore[/] [dim]v{ver}[/]",
+            border_style="cyan",
+            expand=False,
+        )
+    )
     console.print()
 
 

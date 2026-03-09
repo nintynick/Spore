@@ -115,7 +115,9 @@ class ExperimentLoop:
         )
         prompt = self.coordinator.format_prompt(context)
 
-        console.print(f"[dim]Proposing change (parent val_bpb={parent.val_bpb:.6f})...[/]")
+        console.print(
+            f"[dim]Proposing change (parent val_bpb={parent.val_bpb:.6f})...[/]"
+        )
         response = await asyncio.to_thread(self.llm.chat, SYSTEM_PROMPT, prompt)
 
         new_code = _extract_code(response)
@@ -145,11 +147,15 @@ class ExperimentLoop:
         # Keep or revert
         if result.success and result.val_bpb < parent.val_bpb:
             delta = parent.val_bpb - result.val_bpb
-            console.print(f"[bold green]KEEP[/] val_bpb={result.val_bpb:.6f} [green](improved by {delta:.6f})[/]\n")
+            console.print(
+                f"[bold green]KEEP[/] val_bpb={result.val_bpb:.6f} [green](improved by {delta:.6f})[/]\n"
+            )
         else:
             self.runner.apply_code(old_code)
             if result.success:
-                console.print(f"[bold red]DISCARD[/] val_bpb={result.val_bpb:.6f} [dim](parent={parent.val_bpb:.6f})[/]\n")
+                console.print(
+                    f"[bold red]DISCARD[/] val_bpb={result.val_bpb:.6f} [dim](parent={parent.val_bpb:.6f})[/]\n"
+                )
             else:
                 console.print(f"[bold yellow]CRASH[/] {result.error or 'unknown'}\n")
 
