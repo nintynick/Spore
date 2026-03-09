@@ -11,10 +11,10 @@ Based on Karpathy's [autoresearch](https://github.com/karpathy/autoresearch) —
 ```bash
 pip install sporemesh
 spore set groq <your-api-key>
-spore run --genesis
+spore run
 ```
 
-That's it. `--genesis` copies the bundled `train.py` and `prepare.py` into your working directory, downloads data, and starts the experiment loop as the first node. Your identity, database, and config live in `~/.spore/`.
+That's it. The node auto-connects to the network, syncs the research graph, downloads training data, fetches the best known code from peers, and starts running experiments. Your identity, database, and config live in `~/.spore/`.
 
 ## Installation
 
@@ -42,7 +42,6 @@ Requires Python 3.11+. Training works on CUDA, MPS (Apple Silicon), and CPU. No 
 |---------|-------------|
 | `spore set <provider> <key>` | Configure LLM (groq, anthropic, openai, xai) |
 | `spore run` | Run node in foreground (Ctrl+C to stop) |
-| `spore run --genesis` | Genesis node: auto-prepare data, skip peer, train |
 | `spore run --resource N` | Limit resource usage to N% (1-100, default 100) |
 | `spore run --no-train` | Run as sync-only node (no experiments) |
 | `spore start` | Run node as a background daemon |
@@ -64,18 +63,15 @@ Every command auto-initializes the node if it hasn't been set up yet. No need to
 
 ## Multi-Node Setup
 
+New nodes auto-connect to the bootstrap peer and discover the network via PEX (Peer Exchange). Just `spore run` on each machine — no manual peer configuration needed.
+
+To connect to specific peers:
 ```bash
-# Machine A
-spore start --port 7470
-
-# Machine B — connect to A
-spore start --port 7470 --peer 192.168.1.100:7470
-
-# Machine C — connect to both
-spore start --port 7470 --peer 192.168.1.100:7470 --peer 192.168.1.101:7470
+spore run --peer 192.168.1.100:7470
+spore run --peer 192.168.1.100:7470 --peer 192.168.1.101:7470
 ```
 
-Nodes sync their full experiment history on connect and gossip new experiments in real time. Peer Exchange (PEX) means connecting to one node discovers the rest of the network automatically.
+Nodes sync their full experiment history on connect and gossip new experiments in real time. Joining nodes automatically fetch the best frontier code from peers and start improving it — no redundant baseline run.
 
 ## Resource Control
 
@@ -91,15 +87,19 @@ Works on CUDA, MPS, and CPU. Smaller batch = less memory, less compute per step,
 
 ## Explorer (Web UI)
 
+The explorer starts automatically with `spore run` on port 8470. Or launch it standalone:
+
 ```bash
 spore explorer
 ```
 
-Opens a web dashboard at `http://localhost:8470` with:
+Web dashboard at `http://localhost:8470` with:
 - D3.js force-directed DAG visualization
 - Live WebSocket feed of new experiments
 - Frontier table, activity feed, reputation leaderboard
 - Click any node to see full experiment detail (diff, metrics, lineage)
+
+The explorer auto-restarts if it crashes.
 
 ## Architecture
 
@@ -121,7 +121,7 @@ spore/
 ├── query.py        # CLI query commands (status, graph, frontier, info)
 ├── wrapper.py      # Autoresearch integration (import result)
 ├── workspace/
-│   ├── train.py    # Bundled training script (copied to CWD by --genesis)
+│   ├── train.py    # Bundled training script (auto-copied on first run)
 │   └── prepare.py  # Bundled data preparation script
 └── explorer/
     ├── server.py   # FastAPI + WebSocket server
@@ -133,10 +133,11 @@ spore/
 1. Each node has an Ed25519 identity and a local SQLite DAG
 2. Experiments are immutable, content-addressed records (CID = SHA-256)
 3. Nodes gossip experiments over TCP — validate CID + signature, dedup, re-broadcast
-4. The "frontier" = best unbeaten experiments (no child has lower val_bpb)
-5. Nodes probabilistically spot-check incoming experiments by re-running them
-6. If a result looks fabricated, a challenge triggers 3 independent verifiers
-7. Reputation tracks trustworthiness — dispute losers get penalized (-5), winners rewarded
+4. Joining nodes sync the DAG, request the best frontier code from peers, and start improving it
+5. The "frontier" = best unbeaten experiments (no child has lower val_bpb)
+6. Nodes probabilistically spot-check incoming experiments by re-running them
+7. If a result looks fabricated, a challenge triggers 3 independent verifiers
+8. Reputation tracks trustworthiness — dispute losers get penalized (-5), winners rewarded
 
 See `spec/protocol.md` for the full protocol specification.
 
@@ -152,6 +153,23 @@ peer = []
 ```
 
 Default gossip port is `7470` (S-P-O-R on a phone keypad).
+
+### Log
+
+Diagnostic log at `~/.spore/log/spore.log` (10MB rotation, 3 backups). Includes full timestamps, log levels, and module names for debugging. Console output stays minimal.
+
+### Data Directory
+
+```
+~/.spore/
+├── identity/          # Ed25519 keypair + node ID
+├── db/                # SQLite databases (graph + reputation)
+├── artifact/          # Content-addressed code snapshot
+├── log/               # Rotating log file
+├── config.toml        # Node configuration
+├── llm.toml           # LLM provider config
+└── known_peer         # Discovered peer (one per line)
+```
 
 ## Development
 

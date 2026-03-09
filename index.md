@@ -31,7 +31,7 @@ Every existing decentralized ML project (Bittensor, Gensyn, Petals, Prime Intell
 ```bash
 pip install sporemesh
 spore set groq <your-api-key>
-spore run --genesis
+spore run
 ```
 
 ## Key File
@@ -39,7 +39,7 @@ spore run --genesis
 - `spec/protocol.md` — full protocol specification
 - `spore/record.py` — ExperimentRecord dataclass
 - `spore/graph.py` — research DAG (SQLite-backed)
-- `spore/node.py` — network node with genesis mode + peer persistence
+- `spore/node.py` — network node with bootstrap peer + peer persistence
 - `spore/gossip.py` — TCP gossip protocol with PEX (peer exchange)
 - `spore/loop.py` — autonomous experiment loop (LLM → train → keep/discard)
 - `spore/llm.py` — multi-provider LLM client (Groq, Anthropic, OpenAI, xAI)
@@ -48,7 +48,7 @@ spore run --genesis
 - `spore/verify.py` — tolerance band, reputation scoring, dispute resolution
 - `spore/challenge.py` — challenge protocol coordinator (spot-check → dispute)
 - `spore/cli.py` — CLI interface (run, set, clean, status, explorer, etc.)
-- `spore/workspace/` — bundled train.py + prepare.py (copied by `--genesis`)
+- `spore/workspace/` — bundled train.py + prepare.py (auto-copied on first run)
 
 ## Build Path
 
@@ -58,4 +58,5 @@ spore run --genesis
 4. ~~Autonomous loop — LLM proposes, runner evaluates, gossip publishes~~
 5. ~~P2P discovery — bootstrap peers, PEX, peer persistence~~
 6. ~~Verification — spot-checking, challenge protocol, reputation~~
-7. Production networking — libp2p, DHT, GossipSub
+7. ~~Zero-config join — auto-prepare, code fetch from peers, skip baseline~~
+8. Production networking — libp2p, DHT, GossipSub

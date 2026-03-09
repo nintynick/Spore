@@ -114,6 +114,8 @@ Length-prefixed JSON over TCP:
 | `challenge` | `{experiment_id, challenger_id, challenger_bpb, challenger_gpu}` | Broadcast |
 | `challenge_response` | `{experiment_id, challenger_id, verifier_id, verifier_bpb, verifier_gpu}` | Broadcast |
 | `dispute` | `{experiment_id, challenger_id, challenger_bpb, outcome, ground_truth_bpb, verifier_count}` | Broadcast |
+| `code_request` | `{code_cid}` | Request |
+| `code_response` | `{code_cid, code}` | Response |
 | `ping` | `{}` | Request |
 | `pong` | `{}` | Response |
 
@@ -131,6 +133,11 @@ When a node joins or reconnects:
 1. Send `sync_request` with `since` = timestamp of latest local experiment
 2. Peer responds with all experiments after that timestamp
 3. Node validates and inserts each record
+4. Node identifies the best frontier experiment and sends `code_request` with its `code_cid`
+5. Peer looks up the full code snapshot in its artifact store and responds with `code_response` (base64-encoded)
+6. Node verifies the SHA-256 of received code matches the requested CID, caches it locally, and applies it as `train.py`
+
+This allows joining nodes to start improving the best known code immediately, without running a redundant baseline.
 
 ### 4.5 Peer Exchange (PEX)
 
@@ -144,12 +151,10 @@ This allows the network to grow organically — connecting to one peer discovers
 ### 4.6 Peer Discovery
 
 Nodes discover the network via:
-1. **Bootstrap peer**: ` 188.36.196.221:42208` (used when no peers are configured and not in genesis mode)
+1. **Bootstrap peer**: `188.36.196.221:42208` (used when no peers are configured)
 2. **Persisted known peer**: `~/.spore/known_peer` (peers from previous sessions)
 3. **PEX**: peer lists received from connected peers
 4. **Manual config**: `spore connect <host:port>` or `--peer` flag
-
-Genesis mode (`--genesis`) skips all peer connection — use this when starting the first node in a new network.
 
 NAT'd nodes (e.g., laptops behind a router) can connect outbound to public peers and participate fully. They receive all gossip through their outbound connections. Port forwarding is only needed to accept inbound connections from other peers.
 
