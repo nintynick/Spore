@@ -6,6 +6,7 @@ import asyncio
 import importlib.metadata
 import logging
 import logging.handlers
+import signal
 import sys
 from pathlib import Path
 
@@ -141,6 +142,21 @@ def run(
 
         from .explorer import create_app
 
+        shutdown = asyncio.Event()
+        explorer_task: asyncio.Task | None = None
+        loop_task: asyncio.Task | None = None
+        server: uvicorn.Server | None = None
+
+        def _request_shutdown():
+            shutdown.set()
+
+        event_loop = asyncio.get_running_loop()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                event_loop.add_signal_handler(sig, _request_shutdown)
+            except NotImplementedError:
+                pass
+
         # Start peer connections immediately
         await node.start(skip_peer=genesis)
 
@@ -161,10 +177,15 @@ def run(
                 server = uvicorn.Server(uvi_config)
 
                 async def _run_explorer():
-                    while True:
+                    while not shutdown.is_set():
                         try:
                             await server.serve()
+                            break
+                        except asyncio.CancelledError:
+                            raise
                         except Exception as exc:
+                            if shutdown.is_set():
+                                break
                             log.warning("Explorer crashed: %s — restarting in 5s", exc)
                             console.print(
                                 f"  [dim]Explorer crashed: {exc} — restarting...[/]"
@@ -172,10 +193,14 @@ def run(
                             await asyncio.sleep(5)
                             server.started = False
 
-                asyncio.create_task(_run_explorer())
+                explorer_task = asyncio.create_task(_run_explorer())
                 # Give uvicorn a moment to bind
                 await asyncio.sleep(0.5)
                 if server.started:
+                    if actual_web_port != web_port:
+                        console.print(
+                            f"  [dim]Explorer port {web_port} was busy, using :{actual_web_port}[/]"
+                        )
                     console.print(
                         f"  Explorer: [link=http://localhost:{actual_web_port}]http://localhost:{actual_web_port}[/link]"
                     )
@@ -202,11 +227,26 @@ def run(
                 from .loop import ExperimentLoop
 
                 loop = ExperimentLoop(node, Path.cwd())
-                asyncio.create_task(loop.run())
-            await asyncio.Event().wait()
+                loop_task = asyncio.create_task(loop.run())
+            await shutdown.wait()
         except asyncio.CancelledError:
             pass
         finally:
+            shutdown.set()
+            if loop_task:
+                loop_task.cancel()
+                try:
+                    await loop_task
+                except asyncio.CancelledError:
+                    pass
+            if server:
+                server.should_exit = True
+            if explorer_task:
+                explorer_task.cancel()
+                try:
+                    await explorer_task
+                except asyncio.CancelledError:
+                    pass
             await node.stop()
 
     try:
