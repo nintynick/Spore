@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from test.conftest import make_record
 
 import pytest
@@ -35,6 +36,36 @@ def test_remote_experiment_records_publish_without_storing_fake_code(tmp_path, k
     stats = node.reputation.get_stats(record.node_id)
     assert stats["experiments_published"] == 1
     assert node.store.get(record.code_cid) is None
+
+    node.graph.close()
+    node.reputation.close()
+
+
+@pytest.mark.asyncio
+async def test_fetch_code_retries_newly_discovered_peers(tmp_path, monkeypatch):
+    node = SporeNode(NodeConfig(port=0, data_dir=str(tmp_path)))
+    code_bytes = b"print('frontier')\n"
+    code_cid = hashlib.sha256(code_bytes).hexdigest()
+    node.gossip.peers["bootstrap:7470"] = (None, None)
+    attempts: list[str] = []
+
+    async def fake_request_code(addr: str, requested_cid: str, timeout: float = 30.0):
+        assert requested_cid == code_cid
+        attempts.append(addr)
+        if addr == "bootstrap:7470":
+            node.gossip.peers["source:7470"] = (None, None)
+            return None
+        if addr == "source:7470":
+            return code_bytes
+        return None
+
+    monkeypatch.setattr(node.gossip, "request_code", fake_request_code)
+
+    fetched = await node.fetch_code(code_cid)
+
+    assert fetched == code_bytes
+    assert attempts == ["bootstrap:7470", "source:7470"]
+    assert node.store.get(code_cid) == code_bytes
 
     node.graph.close()
     node.reputation.close()

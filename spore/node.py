@@ -203,10 +203,24 @@ class SporeNode:
     async def fetch_code(self, code_cid: str) -> bytes | None:
         """Try to fetch code by CID from any connected peer."""
         import hashlib
+        import time
 
-        for addr in list(self.gossip.peers.keys()):
-            code_bytes = await self.gossip.request_code(addr, code_cid, timeout=15.0)
-            if code_bytes is not None:
+        attempted: set[str] = set()
+        deadline = time.monotonic() + 20.0
+        while time.monotonic() < deadline:
+            pending = [
+                addr for addr in self.gossip.peers.keys() if addr not in attempted
+            ]
+            if not pending:
+                await asyncio.sleep(0.5)
+                continue
+
+            for addr in pending:
+                attempted.add(addr)
+                code_bytes = await self.gossip.request_code(addr, code_cid, timeout=5.0)
+                if code_bytes is None:
+                    continue
+
                 actual_cid = hashlib.sha256(code_bytes).hexdigest()
                 if actual_cid == code_cid:
                     self.store.put(code_bytes)
