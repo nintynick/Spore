@@ -8,6 +8,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 
 from ..node import SporeNode
 from ..record import ExperimentRecord, Status
@@ -79,14 +80,13 @@ def create_app(node: SporeNode) -> FastAPI:
     app = FastAPI(title="Spore Explorer", version="0.1.0")
     ws_manager = ConnectionManager()
 
-    # Register listener so gossip pushes new experiments to WebSocket clients
     def on_new_experiment(record: ExperimentRecord):
         data = {"event": "experiment", "data": _record_to_dict(record)}
         try:
             loop = asyncio.get_running_loop()
             asyncio.ensure_future(ws_manager.broadcast(data), loop=loop)
         except RuntimeError:
-            pass  # No event loop running
+            pass
 
     node.add_listener(on_new_experiment)
 
@@ -96,6 +96,8 @@ def create_app(node: SporeNode) -> FastAPI:
     async def index():
         html_path = STATIC_DIR / "index.html"
         return HTMLResponse(html_path.read_text())
+
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
     # --- REST API ---
 
@@ -149,9 +151,51 @@ def create_app(node: SporeNode) -> FastAPI:
         chain = node.graph.ancestors(cid)
         return [_record_to_dict(r) for r in chain]
 
+    @app.get("/api/experiment/{cid}/children")
+    async def children(cid: str):
+        kids = node.graph.children(cid)
+        return [_record_to_dict(r) for r in kids]
+
+    @app.get("/api/recent")
+    async def recent(limit: int = 50):
+        records = node.graph.recent(limit=limit)
+        return [_record_to_dict(r) for r in records]
+
+    @app.get("/api/node/{node_id}/experiment")
+    async def node_experiment(node_id: str):
+        records = node.graph.by_node(node_id)
+        return [_record_to_dict(r) for r in records]
+
+    @app.get("/api/search")
+    async def search(q: str = ""):
+        """Search experiments by CID prefix, description, or node ID."""
+        if not q or len(q) < 2:
+            return []
+        q_lower = q.lower()
+        results = []
+        for r in node.graph.all_records():
+            if (
+                (r.id and r.id.startswith(q))
+                or q_lower in r.description.lower()
+                or (r.node_id and r.node_id.startswith(q))
+                or q_lower in (r.gpu_model or "").lower()
+            ):
+                results.append(_record_to_dict(r))
+            if len(results) >= 20:
+                break
+        return results
+
     @app.get("/api/leaderboard")
     async def leaderboard():
         return node.reputation.leaderboard(limit=50)
+
+    @app.get("/api/artifact/{cid}")
+    async def artifact(cid: str):
+        """Get stored code artifact by CID."""
+        data = node.store.get(cid)
+        if data is None:
+            return {"error": "not found"}
+        return {"cid": cid, "content": data.decode("utf-8", errors="replace")}
 
     # --- WebSocket ---
 
@@ -160,7 +204,7 @@ def create_app(node: SporeNode) -> FastAPI:
         await ws_manager.connect(ws)
         try:
             while True:
-                await ws.receive_text()  # Keep connection alive
+                await ws.receive_text()
         except WebSocketDisconnect:
             ws_manager.disconnect(ws)
 
