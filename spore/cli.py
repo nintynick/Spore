@@ -1,0 +1,457 @@
+"""Spore CLI — interact with your local node."""
+
+from __future__ import annotations
+
+import asyncio
+import importlib.metadata
+import logging
+import sys
+from pathlib import Path
+
+import click
+from rich.console import Console
+
+from .node import SPORE_DIR, NodeConfig, SporeNode
+from .record import generate_keypair
+
+console = Console()
+
+
+def ensure_initialized(data_dir: Path | None = None) -> str:
+    """Auto-initialize the node if needed. Returns the node ID."""
+    data_dir = data_dir or SPORE_DIR
+    node_id_path = data_dir / "identity" / "node_id"
+    if node_id_path.exists():
+        return node_id_path.read_text().strip()
+
+    from nacl.encoding import HexEncoder
+
+    sk, pk_hex = generate_keypair()
+    (data_dir / "identity").mkdir(parents=True, exist_ok=True)
+    (data_dir / "identity" / "private_key").write_text(
+        sk.encode(encoder=HexEncoder).decode("ascii")
+    )
+    (data_dir / "identity" / "node_id").write_text(pk_hex)
+    (data_dir / "db").mkdir(parents=True, exist_ok=True)
+    (data_dir / "artifact").mkdir(parents=True, exist_ok=True)
+    NodeConfig().save()
+    console.print(f"Node initialized. ID: [cyan]{pk_hex[:16]}...[/]")
+    return pk_hex
+
+
+@click.group()
+def cli():
+    """Spore — Decentralized AI Research Protocol.
+
+    BitTorrent for ML experiments. Run autonomous AI research nodes
+    that share results over a peer-to-peer gossip network.
+    """
+    pass
+
+
+@cli.command()
+def init():
+    """Initialize a new Spore node (generate identity, create directories)."""
+    node_id = ensure_initialized()
+    console.print(f"Node ready. ID: [cyan]{node_id[:16]}...[/]")
+    console.print(f"Data directory: [dim]{SPORE_DIR}[/]")
+
+
+@cli.command()
+@click.option("--port", "-p", default=7470, help="Gossip listen port")
+@click.option("--peer", "-c", multiple=True, help="Peer address (host:port)")
+@click.option("--no-train", is_flag=True, help="Sync-only mode (no experiment runner)")
+@click.option(
+    "--bootstrap", is_flag=True, help="Full self-contained setup (auto-prepare data)"
+)
+@click.option(
+    "--resource",
+    "-r",
+    type=click.IntRange(1, 100),
+    default=100,
+    help="Resource usage as percent of GPU/CPU (1-100)",
+)
+@click.option(
+    "--data-dir", "-d", default=None, help="Data directory (default: ~/.spore)"
+)
+def run(
+    port: int,
+    peer: tuple[str, ...],
+    no_train: bool,
+    bootstrap: bool,
+    resource: int,
+    data_dir: str | None,
+):
+    """Run the Spore node in the foreground.
+
+    Starts gossip + experiment loop. The node selects frontier experiments,
+    calls the configured LLM for proposals, runs training, and publishes results.
+    Use --no-train for sync-only mode. Use --bootstrap for full self-contained
+    setup (auto-runs prepare.py if data is missing). Configure LLM with `spore set`.
+    """
+    _configure_logging()
+    data_path = Path(data_dir).expanduser() if data_dir else SPORE_DIR
+    ensure_initialized(data_path)
+    config = NodeConfig.load(data_path / "config.toml")
+    config.data_dir = str(data_path)
+    config.port = port
+    if peer:
+        config.peer = list(peer)
+
+    node = SporeNode(config)
+
+    # Set resource level for train.py subprocess
+    import os
+
+    os.environ["SPORE_RESOURCE"] = str(resource)
+
+    # Auto-prepare data if --bootstrap
+    if bootstrap:
+        _auto_prepare()
+
+    # Determine training mode
+    should_train = False
+    if no_train:
+        mode = "sync-only"
+    elif not Path("train.py").exists():
+        mode = "sync-only (no train.py in current directory)"
+    else:
+        from .llm import load_config as load_llm_config
+
+        llm_cfg = load_llm_config(data_path)
+        if not llm_cfg.is_configured():
+            mode = "sync-only (run 'spore set <provider> <key>' to enable research)"
+        else:
+            mode = f"research ({llm_cfg.provider}/{llm_cfg.get_model()})"
+            should_train = True
+
+    _print_banner(node, port, config.peer, mode, resource)
+
+    async def _run():
+        await node.start()
+        try:
+            if should_train:
+                from .loop import ExperimentLoop
+
+                loop = ExperimentLoop(node, Path.cwd())
+                asyncio.create_task(loop.run())
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            pass
+        finally:
+            await node.stop()
+
+    try:
+        asyncio.run(_run())
+    except KeyboardInterrupt:
+        console.print("\nShutting down.")
+    except OSError as e:
+        _handle_port_error(e, port)
+
+
+@cli.command()
+@click.argument("addr")
+def connect(addr: str):
+    """Add a peer to the config (host:port)."""
+    ensure_initialized()
+    config = NodeConfig.load()
+    if addr in config.peer:
+        console.print(f"Peer [cyan]{addr}[/] already configured.")
+        return
+    config.peer.append(addr)
+    config.save()
+    console.print(f"Added peer [cyan]{addr}[/].")
+
+
+@cli.command()
+@click.argument("addr")
+def disconnect(addr: str):
+    """Remove a peer from the config."""
+    ensure_initialized()
+    config = NodeConfig.load()
+    if addr not in config.peer:
+        console.print(f"Peer [cyan]{addr}[/] not found in config.")
+        return
+    config.peer.remove(addr)
+    config.save()
+    console.print(f"Removed peer [cyan]{addr}[/].")
+
+
+@cli.command(name="peer")
+def list_peer():
+    """List configured and discovered peers."""
+    ensure_initialized()
+    config = NodeConfig.load()
+    known_path = Path(config.data_dir).expanduser() / "known_peer"
+    known = set()
+    if known_path.exists():
+        known = {l.strip() for l in known_path.read_text().splitlines() if l.strip()}
+
+    if not config.peer and not known:
+        console.print("No peers. Use [cyan]spore connect <host:port>[/] to add.")
+        return
+
+    if config.peer:
+        console.print("[bold]Configured[/]")
+        for p in config.peer:
+            console.print(f"  - {p}")
+    discovered = known - set(config.peer)
+    if discovered:
+        console.print("[bold]Discovered (via PEX)[/]")
+        for p in sorted(discovered):
+            console.print(f"  - [dim]{p}[/]")
+
+
+@cli.command()
+@click.option("--port", "-p", default=7470, help="Gossip port")
+@click.option("--web-port", "-w", default=8470, help="Web UI port")
+@click.option("--peer", "-c", multiple=True, help="Peer address (host:port)")
+def explorer(port: int, web_port: int, peer: tuple[str, ...]):
+    """Launch the Spore Explorer web UI with a gossip server.
+
+    If a daemon is already running, the explorer auto-attaches to it
+    and serves the web UI in view mode.
+    """
+    import uvicorn
+
+    from .daemon import is_running
+    from .explorer import create_app
+
+    ensure_initialized()
+    config = NodeConfig.load()
+    config.port = port
+    if peer:
+        config.peer = list(peer)
+
+    # Find an available web port
+    actual_web_port = _find_available_port(web_port)
+    if actual_web_port is None:
+        console.print(f"[red]No available port found near {web_port}.[/]")
+        return
+
+    node = SporeNode(config)
+    app = create_app(node)
+
+    console.print("\n[bold]Spore Explorer[/]")
+    console.print(f"  Node:   [cyan]{node.node_id[:16]}...[/]")
+    url = f"http://localhost:{actual_web_port}"
+    console.print(f"  Web UI: [link={url}]{url}[/link]")
+
+    async def _run():
+        try:
+            await node.start()
+            console.print(f"  Gossip: {config.host}:{port}")
+        except OSError as e:
+            if "address already in use" not in str(e).lower():
+                raise
+            daemon_pid = is_running()
+            if not daemon_pid:
+                raise
+            node.gossip.port = 0
+            await node.gossip.start()
+            await node.gossip.connect_to_peer("127.0.0.1", port)
+            console.print(f"  [dim]Attached to daemon (PID {daemon_pid}) on :{port}[/]")
+
+        if config.peer:
+            console.print(f"  Peer:   {', '.join(config.peer)}")
+        console.print()
+
+        uvi_config = uvicorn.Config(
+            app, host="0.0.0.0", port=actual_web_port, log_level="warning"
+        )
+        server = uvicorn.Server(uvi_config)
+        await server.serve()
+
+    try:
+        asyncio.run(_run())
+    except KeyboardInterrupt:
+        console.print("\nShutting down.")
+    except OSError as e:
+        _handle_port_error(e, actual_web_port)
+
+
+@cli.command()
+@click.option(
+    "--all",
+    "clean_all",
+    is_flag=True,
+    help="Also remove cached data (~/.cache/autoresearch)",
+)
+@click.option(
+    "--workspace",
+    is_flag=True,
+    help="Also remove train.py/prepare.py from current directory",
+)
+def clean(clean_all: bool, workspace: bool):
+    """Remove all Spore data (identity, database, config, artifact, log).
+
+    By default removes ~/.spore/. Use --all to also remove cached training
+    data (~/.cache/autoresearch). Use --workspace to remove train.py and
+    prepare.py from the current directory.
+    """
+    import shutil
+
+    targets: list[tuple[Path, str]] = [
+        (SPORE_DIR, "~/.spore (identity, database, config)"),
+    ]
+    if clean_all:
+        targets.append(
+            (
+                Path("~/.cache/autoresearch").expanduser(),
+                "~/.cache/autoresearch (training data)",
+            )
+        )
+    if workspace:
+        for f in ("train.py", "prepare.py", "run.log"):
+            p = Path.cwd() / f
+            if p.exists():
+                targets.append((p, f"{f} (workspace file)"))
+
+    existing = [(p, desc) for p, desc in targets if p.exists()]
+    if not existing:
+        console.print("Nothing to clean.")
+        return
+
+    console.print("[bold]This will delete:[/]")
+    for _, desc in existing:
+        console.print(f"  [red]- {desc}[/]")
+
+    if not click.confirm("\nContinue?"):
+        console.print("Aborted.")
+        return
+
+    for p, desc in existing:
+        if p.is_dir():
+            shutil.rmtree(p)
+        else:
+            p.unlink()
+        console.print(f"  Removed {desc}")
+
+    console.print("[green]Clean.[/]")
+
+
+@cli.command()
+def version():
+    """Show the Spore version."""
+    try:
+        ver = importlib.metadata.version("sporemesh")
+    except importlib.metadata.PackageNotFoundError:
+        from . import __version__ as ver
+    console.print(f"spore [cyan]{ver}[/]")
+
+
+# --- Helpers ---
+
+
+def _auto_prepare():
+    """Copy bundled workspace files and run prepare.py if data is missing."""
+    import shutil
+    import subprocess
+    from importlib.resources import files
+
+    # Copy train.py and prepare.py from package if missing
+    workspace_pkg = files("spore.workspace")
+    for filename in ("train.py", "prepare.py"):
+        dest = Path.cwd() / filename
+        if not dest.exists():
+            src = workspace_pkg / filename
+            shutil.copy2(str(src), str(dest))
+            console.print(f"  Copied [cyan]{filename}[/] to working directory.")
+
+    # Run prepare.py if data isn't ready
+    cache_dir = Path("~/.cache/autoresearch").expanduser()
+    if cache_dir.exists() and any(cache_dir.iterdir()):
+        console.print("[dim]Data already prepared, skipping.[/]")
+        return
+
+    console.print("[bold]Preparing data (this may download ~GB of data)...[/]")
+    result = subprocess.run(
+        [sys.executable, "prepare.py"],
+        cwd=str(Path.cwd()),
+    )
+    if result.returncode != 0:
+        console.print("[red]prepare.py failed.[/]")
+        raise SystemExit(1)
+    console.print("[green]Data prepared.[/]")
+
+
+def _configure_logging():
+    """Set up logging so users see gossip events."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="  %(message)s",
+    )
+    # Quiet down noisy loggers
+    logging.getLogger("asyncio").setLevel(logging.WARNING)
+
+
+def _print_banner(
+    node: SporeNode, port: int, peer: list[str], mode: str, resource: int = 100
+):
+    try:
+        ver = importlib.metadata.version("sporemesh")
+    except importlib.metadata.PackageNotFoundError:
+        from . import __version__ as ver
+    console.print(f"\n[bold]Spore[/] [dim]v{ver}[/]")
+    console.print(f"  Node ID:   [cyan]{node.node_id[:16]}...[/]")
+    console.print(f"  Port:      {port}")
+    console.print(f"  Peer:      {len(peer)} configured")
+    console.print(f"  Data:      {node.data_dir}")
+    console.print(f"  Resource:  {resource}%")
+    console.print(f"  Mode:      {mode}")
+    if mode == "foreground":
+        console.print("  [dim]Ctrl+C to stop | 'spore start' for background mode[/]")
+    console.print()
+
+
+def _find_available_port(start: int, max_attempt: int = 10) -> int | None:
+    """Find an available port starting from `start`, trying up to max_attempt."""
+    import socket
+
+    for offset in range(max_attempt):
+        candidate = start + offset
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind(("0.0.0.0", candidate))
+                return candidate
+            except OSError:
+                continue
+    return None
+
+
+def _handle_port_error(e: OSError, port: int):
+    if "address already in use" in str(e).lower():
+        console.print(f"\n[red]Port {port} is already in use.[/]")
+        console.print(f"  Try:  [cyan]spore run --port {port + 1}[/]")
+        console.print("  Or:   [cyan]spore stop[/]  (if a daemon is running)")
+    else:
+        console.print(f"[red]Network error: {e}[/]")
+
+
+# --- Register sub-module commands ---
+
+from .daemon import register_command as _register_daemon
+from .llm import register_command as _register_llm
+from .query import register_command as _register_query
+
+_register_query(cli)
+_register_daemon(cli)
+_register_llm(cli)
+
+
+def main():
+    """Entry point with global error handling."""
+    try:
+        cli()
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/]")
+        console.print("[dim]Run with SPORE_DEBUG=1 for full traceback.[/]")
+        import os
+
+        if os.environ.get("SPORE_DEBUG"):
+            raise
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,799 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Spore Explorer</title>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --bg: #0a0a0a;
+    --surface: #141414;
+    --surface2: #1e1e1e;
+    --border: #2a2a2a;
+    --text: #e0e0e0;
+    --text-dim: #888;
+    --cyan: #22d3ee;
+    --green: #4ade80;
+    --red: #f87171;
+    --yellow: #fbbf24;
+    --mono: 'SF Mono', 'Fira Code', 'JetBrains Mono', 'Cascadia Code', monospace;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 13px;
+    overflow: hidden;
+    height: 100vh;
+  }
+
+  /* --- HEADER --- */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+  .header h1 {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--cyan);
+    letter-spacing: 1px;
+  }
+  .header .meta {
+    display: flex;
+    gap: 20px;
+    color: var(--text-dim);
+    font-size: 12px;
+  }
+  .header .meta span { color: var(--text); }
+  .ws-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--red);
+    margin-right: 4px;
+    vertical-align: middle;
+  }
+  .ws-dot.connected { background: var(--green); }
+
+  /* --- STATS BAR --- */
+  .stat-bar {
+    display: flex;
+    gap: 32px;
+    padding: 10px 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+  .stat-bar .val { color: var(--cyan); font-weight: 600; }
+
+  /* --- MAIN LAYOUT --- */
+  .main {
+    display: flex;
+    height: calc(100vh - 90px - 42px);
+  }
+
+  /* --- DAG PANEL --- */
+  .dag-panel {
+    flex: 0 0 65%;
+    border-right: 1px solid var(--border);
+    position: relative;
+    overflow: hidden;
+    background: var(--bg);
+  }
+  .dag-panel svg { width: 100%; height: 100%; }
+  .dag-panel .empty-state {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: var(--text-dim);
+    text-align: center;
+  }
+  .dag-panel .empty-state h2 {
+    font-size: 18px;
+    margin-bottom: 8px;
+    color: var(--border);
+  }
+
+  /* --- DETAIL PANEL --- */
+  .detail-panel {
+    flex: 0 0 35%;
+    overflow-y: auto;
+    background: var(--surface);
+    padding: 16px;
+  }
+  .detail-panel h2 {
+    font-size: 13px;
+    color: var(--cyan);
+    margin-bottom: 12px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  .detail-empty {
+    color: var(--text-dim);
+    margin-top: 40px;
+    text-align: center;
+  }
+  .detail-field {
+    margin-bottom: 10px;
+  }
+  .detail-field label {
+    display: block;
+    font-size: 10px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 2px;
+  }
+  .detail-field .value {
+    color: var(--text);
+    word-break: break-all;
+  }
+  .detail-field .value.cid {
+    font-size: 11px;
+    color: var(--cyan);
+  }
+  .detail-field .value.bpb {
+    font-size: 18px;
+    font-weight: 700;
+  }
+  .detail-field .value.keep { color: var(--green); }
+  .detail-field .value.discard { color: var(--red); }
+  .detail-field .value.crash { color: var(--yellow); }
+
+  .diff-block {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 10px;
+    font-size: 11px;
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 200px;
+    overflow-y: auto;
+    line-height: 1.5;
+  }
+  .diff-block .add { color: var(--green); }
+  .diff-block .del { color: var(--red); }
+
+  .ancestor-chain {
+    margin-top: 12px;
+    border-top: 1px solid var(--border);
+    padding-top: 12px;
+  }
+  .ancestor-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 0;
+    cursor: pointer;
+    color: var(--text-dim);
+    font-size: 11px;
+  }
+  .ancestor-item:hover { color: var(--cyan); }
+  .ancestor-item .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  /* --- TABS --- */
+  .tab-bar {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+  }
+  .tab-bar button {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    padding: 10px 20px;
+    font-family: var(--mono);
+    font-size: 12px;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+  }
+  .tab-bar button:hover { color: var(--text); }
+  .tab-bar button.active {
+    color: var(--cyan);
+    border-bottom-color: var(--cyan);
+  }
+  .tab-content {
+    display: none;
+    overflow-y: auto;
+  }
+  .tab-content.active { display: block; }
+
+  /* --- TABLE --- */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+  }
+  th {
+    text-align: left;
+    padding: 8px 12px;
+    color: var(--text-dim);
+    font-weight: 500;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    user-select: none;
+  }
+  th:hover { color: var(--text); }
+  td {
+    padding: 6px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  tr:hover { background: var(--surface2); }
+  tr.clickable { cursor: pointer; }
+
+  .status-badge {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+  .status-badge.keep { background: rgba(74,222,128,0.15); color: var(--green); }
+  .status-badge.discard { background: rgba(248,113,113,0.15); color: var(--red); }
+  .status-badge.crash { background: rgba(251,191,36,0.15); color: var(--yellow); }
+
+  /* --- ACTIVITY FEED --- */
+  .activity-item {
+    display: flex;
+    gap: 12px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+    align-items: flex-start;
+  }
+  .activity-item .time {
+    color: var(--text-dim);
+    flex-shrink: 0;
+    font-size: 11px;
+    min-width: 60px;
+  }
+  .activity-item .cid-link {
+    color: var(--cyan);
+    cursor: pointer;
+  }
+  .activity-item .cid-link:hover { text-decoration: underline; }
+
+  /* --- SVG STYLES --- */
+  .node-circle {
+    cursor: pointer;
+    transition: r 0.2s;
+  }
+  .node-circle:hover {
+    filter: brightness(1.3);
+  }
+  .node-label {
+    fill: var(--text-dim);
+    font-size: 10px;
+    font-family: var(--mono);
+    pointer-events: none;
+    text-anchor: middle;
+  }
+  .edge-line {
+    stroke: var(--border);
+    stroke-width: 1.5;
+    fill: none;
+  }
+  .edge-arrow {
+    fill: var(--border);
+  }
+
+  .frontier-ring {
+    fill: none;
+    stroke: var(--cyan);
+    stroke-width: 2;
+    opacity: 0.7;
+    pointer-events: none;
+  }
+
+  .selected-ring {
+    fill: none;
+    stroke: #fff;
+    stroke-width: 2;
+    opacity: 0.8;
+    pointer-events: none;
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>SPORE EXPLORER</h1>
+  <div class="meta">
+    <div>node <span id="hdr-node">...</span></div>
+    <div>peer <span id="hdr-peer">0</span></div>
+    <div>experiments <span id="hdr-total">0</span></div>
+    <div><span class="ws-dot" id="ws-dot"></span>live</div>
+  </div>
+</div>
+
+<div class="stat-bar">
+  <div>experiments: <span class="val" id="stat-total">0</span></div>
+  <div>frontier: <span class="val" id="stat-frontier">0</span></div>
+  <div>best val_bpb: <span class="val" id="stat-best">—</span></div>
+  <div>peer: <span class="val" id="stat-peer">0</span></div>
+</div>
+
+<div class="main">
+  <div class="dag-panel" id="dag-panel">
+    <div class="empty-state" id="dag-empty">
+      <h2>NO EXPERIMENTS YET</h2>
+      <div>Run experiments or connect to peers</div>
+    </div>
+  </div>
+  <div class="detail-panel" id="detail-panel">
+    <h2>Experiment Detail</h2>
+    <div class="detail-empty" id="detail-empty">Click a node in the DAG</div>
+    <div id="detail-content" style="display:none"></div>
+  </div>
+</div>
+
+<div class="tab-bar">
+  <button class="active" data-tab="frontier-tab">Frontier</button>
+  <button data-tab="activity-tab">Activity</button>
+  <button data-tab="leaderboard-tab">Leaderboard</button>
+</div>
+
+<div id="frontier-tab" class="tab-content active" style="max-height:250px;overflow-y:auto">
+  <table id="frontier-table">
+    <thead><tr>
+      <th>CID</th><th>val_bpb</th><th>depth</th><th>GPU</th>
+      <th>steps</th><th>params</th><th>description</th>
+    </tr></thead>
+    <tbody></tbody>
+  </table>
+</div>
+
+<div id="activity-tab" class="tab-content" style="max-height:250px;overflow-y:auto">
+  <div id="activity-feed"></div>
+</div>
+
+<div id="leaderboard-tab" class="tab-content" style="max-height:250px;overflow-y:auto">
+  <table id="leaderboard-table">
+    <thead><tr>
+      <th>#</th><th>Node</th><th>Score</th>
+      <th>Published</th><th>Verified</th><th>Disputes Won</th><th>Disputes Lost</th>
+    </tr></thead>
+    <tbody></tbody>
+  </table>
+</div>
+
+<script>
+// ===== STATE =====
+let graphData = { node: [], edge: [], frontier_id: [] };
+let selectedNode = null;
+let simulation = null;
+let svg, g, linkGroup, nodeGroup;
+
+// ===== TABS =====
+document.querySelectorAll('.tab-bar button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-bar button').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById(btn.dataset.tab).classList.add('active');
+  });
+});
+
+// ===== HELPERS =====
+function shortCid(cid) { return cid ? cid.slice(0, 8) : '—'; }
+function formatParams(n) {
+  if (n >= 1e9) return (n/1e9).toFixed(1) + 'B';
+  if (n >= 1e6) return (n/1e6).toFixed(1) + 'M';
+  if (n >= 1e3) return (n/1e3).toFixed(1) + 'K';
+  return String(n);
+}
+function statusColor(s) {
+  return s === 'keep' ? '#4ade80' : s === 'discard' ? '#f87171' : '#fbbf24';
+}
+function timeAgo(ts) {
+  const sec = Math.floor(Date.now()/1000 - ts);
+  if (sec < 60) return sec + 's';
+  if (sec < 3600) return Math.floor(sec/60) + 'm';
+  if (sec < 86400) return Math.floor(sec/3600) + 'h';
+  return Math.floor(sec/86400) + 'd';
+}
+
+// ===== API =====
+async function fetchJson(url) {
+  const res = await fetch(url);
+  return res.json();
+}
+
+async function refreshStat() {
+  const s = await fetchJson('/api/stat');
+  document.getElementById('stat-total').textContent = s.experiment_count;
+  document.getElementById('stat-frontier').textContent = s.frontier_size;
+  document.getElementById('stat-best').textContent = s.best_val_bpb != null ? s.best_val_bpb.toFixed(6) : '—';
+  document.getElementById('stat-peer').textContent = s.peer_count;
+  document.getElementById('hdr-node').textContent = shortCid(s.node_id);
+  document.getElementById('hdr-peer').textContent = s.peer_count;
+  document.getElementById('hdr-total').textContent = s.experiment_count;
+}
+
+async function refreshFrontier() {
+  const data = await fetchJson('/api/frontier');
+  const tbody = document.querySelector('#frontier-table tbody');
+  tbody.innerHTML = '';
+  data.forEach(r => {
+    const tr = document.createElement('tr');
+    tr.className = 'clickable';
+    tr.onclick = () => selectExperiment(r.id);
+    tr.innerHTML = `
+      <td style="color:var(--cyan)">${shortCid(r.id)}</td>
+      <td style="color:var(--green)">${r.val_bpb.toFixed(6)}</td>
+      <td>${r.depth}</td>
+      <td>${r.gpu_model || '—'}</td>
+      <td>${r.num_steps}</td>
+      <td>${formatParams(r.num_params)}</td>
+      <td>${r.description.slice(0, 40)}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+async function refreshLeaderboard() {
+  const data = await fetchJson('/api/leaderboard');
+  const tbody = document.querySelector('#leaderboard-table tbody');
+  tbody.innerHTML = '';
+  data.forEach((r, i) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${i + 1}</td>
+      <td style="color:var(--cyan)">${shortCid(r.node_id)}</td>
+      <td style="color:${r.score >= 0 ? 'var(--green)' : 'var(--red)'}">${r.score.toFixed(1)}</td>
+      <td>${r.experiments_published}</td>
+      <td>${r.experiments_verified}</td>
+      <td>${r.disputes_won}</td>
+      <td>${r.disputes_lost}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+// ===== DETAIL PANEL =====
+async function selectExperiment(cid) {
+  selectedNode = cid;
+  const r = await fetchJson(`/api/experiment/${cid}`);
+  if (r.error) return;
+
+  document.getElementById('detail-empty').style.display = 'none';
+  const content = document.getElementById('detail-content');
+  content.style.display = 'block';
+
+  // Compute delta from parent
+  let deltaHtml = '';
+  if (r.parent) {
+    const parent = await fetchJson(`/api/experiment/${r.parent}`);
+    if (!parent.error) {
+      const delta = r.val_bpb - parent.val_bpb;
+      const sign = delta <= 0 ? '' : '+';
+      const cls = delta <= 0 ? 'keep' : 'discard';
+      deltaHtml = ` <span class="value ${cls}" style="font-size:13px">(${sign}${delta.toFixed(6)})</span>`;
+    }
+  }
+
+  // Format diff with syntax highlighting
+  let diffHtml = '';
+  if (r.diff) {
+    diffHtml = r.diff.split('\n').map(line => {
+      if (line.startsWith('+')) return `<span class="add">${escHtml(line)}</span>`;
+      if (line.startsWith('-')) return `<span class="del">${escHtml(line)}</span>`;
+      return escHtml(line);
+    }).join('\n');
+  }
+
+  content.innerHTML = `
+    <div class="detail-field">
+      <label>CID</label>
+      <div class="value cid">${r.id}</div>
+    </div>
+    <div class="detail-field">
+      <label>Status</label>
+      <span class="status-badge ${r.status}">${r.status}</span>
+    </div>
+    <div class="detail-field">
+      <label>val_bpb</label>
+      <div class="value bpb ${r.status}">${r.val_bpb.toFixed(6)}</div>${deltaHtml}
+    </div>
+    <div class="detail-field">
+      <label>Description</label>
+      <div class="value">${escHtml(r.description)}</div>
+    </div>
+    <div class="detail-field">
+      <label>Hypothesis</label>
+      <div class="value">${escHtml(r.hypothesis || '—')}</div>
+    </div>
+    <div class="detail-field">
+      <label>Depth</label>
+      <div class="value">${r.depth}</div>
+    </div>
+    <div class="detail-field">
+      <label>Parent</label>
+      <div class="value cid" style="cursor:pointer" onclick="selectExperiment('${r.parent || ''}')">${r.parent ? shortCid(r.parent) : 'genesis'}</div>
+    </div>
+    ${r.diff ? `<div class="detail-field"><label>Diff</label><div class="diff-block">${diffHtml}</div></div>` : ''}
+    <div class="detail-field">
+      <label>Hardware</label>
+      <div class="value">${r.gpu_model || '—'} | ${r.peak_vram_mb.toFixed(0)} MB VRAM</div>
+    </div>
+    <div class="detail-field">
+      <label>Training</label>
+      <div class="value">${r.num_steps} steps | ${formatParams(r.num_params)} params</div>
+    </div>
+    <div class="detail-field">
+      <label>Agent</label>
+      <div class="value">${escHtml(r.agent_model || '—')}</div>
+    </div>
+    <div class="detail-field">
+      <label>Node</label>
+      <div class="value cid">${shortCid(r.node_id)}</div>
+    </div>
+    <div class="detail-field">
+      <label>Timestamp</label>
+      <div class="value">${new Date(r.timestamp * 1000).toLocaleString()}</div>
+    </div>
+  `;
+
+  // Load ancestor chain
+  const ancestors = await fetchJson(`/api/experiment/${cid}/ancestor`);
+  if (ancestors.length > 1) {
+    let chainHtml = '<div class="ancestor-chain"><label style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.5px">Ancestor Chain</label>';
+    ancestors.forEach(a => {
+      const dotColor = statusColor(a.status);
+      const isCurrent = a.id === cid;
+      chainHtml += `<div class="ancestor-item" onclick="selectExperiment('${a.id}')" style="${isCurrent ? 'color:var(--text)' : ''}">
+        <span class="dot" style="background:${dotColor}"></span>
+        <span>${shortCid(a.id)}</span>
+        <span>${a.val_bpb.toFixed(6)}</span>
+        <span style="color:var(--text-dim)">${a.description.slice(0,30)}</span>
+      </div>`;
+    });
+    chainHtml += '</div>';
+    content.innerHTML += chainHtml;
+  }
+
+  // Highlight in DAG
+  updateNodeSelection();
+}
+
+function escHtml(s) {
+  const div = document.createElement('div');
+  div.textContent = s;
+  return div.innerHTML;
+}
+
+// ===== DAG VISUALIZATION =====
+function initDag() {
+  const panel = document.getElementById('dag-panel');
+  const w = panel.clientWidth;
+  const h = panel.clientHeight;
+
+  svg = d3.select('#dag-panel')
+    .append('svg')
+    .attr('width', w)
+    .attr('height', h);
+
+  // Arrow marker
+  svg.append('defs').append('marker')
+    .attr('id', 'arrowhead')
+    .attr('viewBox', '0 -5 10 10')
+    .attr('refX', 20)
+    .attr('refY', 0)
+    .attr('markerWidth', 6)
+    .attr('markerHeight', 6)
+    .attr('orient', 'auto')
+    .append('path')
+    .attr('d', 'M0,-5L10,0L0,5')
+    .attr('class', 'edge-arrow');
+
+  g = svg.append('g');
+
+  // Zoom
+  const zoom = d3.zoom()
+    .scaleExtent([0.1, 5])
+    .on('zoom', (e) => g.attr('transform', e.transform));
+  svg.call(zoom);
+
+  linkGroup = g.append('g').attr('class', 'links');
+  nodeGroup = g.append('g').attr('class', 'nodes');
+
+  simulation = d3.forceSimulation()
+    .force('link', d3.forceLink().id(d => d.id).distance(60).strength(0.8))
+    .force('charge', d3.forceManyBody().strength(-120))
+    .force('x', d3.forceX(w / 2).strength(0.05))
+    .force('y', d3.forceY().strength(0.3).y(d => 80 + d.depth * 70))
+    .force('collision', d3.forceCollide(20))
+    .on('tick', ticked);
+}
+
+function ticked() {
+  linkGroup.selectAll('line')
+    .attr('x1', d => d.source.x)
+    .attr('y1', d => d.source.y)
+    .attr('x2', d => d.target.x)
+    .attr('y2', d => d.target.y);
+
+  nodeGroup.selectAll('.node-g')
+    .attr('transform', d => `translate(${d.x},${d.y})`);
+}
+
+function renderDag() {
+  const nodes = graphData.node;
+  const edges = graphData.edge;
+  const frontierSet = new Set(graphData.frontier_id);
+
+  if (nodes.length === 0) {
+    document.getElementById('dag-empty').style.display = 'block';
+    return;
+  }
+  document.getElementById('dag-empty').style.display = 'none';
+
+  // Links
+  const links = linkGroup.selectAll('line').data(edges, d => d.source + '-' + d.target);
+  links.exit().remove();
+  links.enter().append('line')
+    .attr('class', 'edge-line')
+    .attr('marker-end', 'url(#arrowhead)');
+
+  // Nodes
+  const nodeGs = nodeGroup.selectAll('.node-g').data(nodes, d => d.id);
+  nodeGs.exit().remove();
+
+  const enter = nodeGs.enter().append('g').attr('class', 'node-g');
+
+  // Frontier ring
+  enter.append('circle')
+    .attr('class', 'frontier-ring')
+    .attr('r', d => frontierSet.has(d.id) ? 14 : 0);
+
+  // Selection ring
+  enter.append('circle')
+    .attr('class', 'selected-ring')
+    .attr('r', 0);
+
+  // Main circle
+  enter.append('circle')
+    .attr('class', 'node-circle')
+    .attr('r', 8)
+    .attr('fill', d => statusColor(d.status))
+    .on('click', (e, d) => selectExperiment(d.id));
+
+  // Label
+  enter.append('text')
+    .attr('class', 'node-label')
+    .attr('dy', 22)
+    .text(d => shortCid(d.id));
+
+  // Update existing
+  nodeGroup.selectAll('.frontier-ring')
+    .attr('r', d => frontierSet.has(d.id) ? 14 : 0);
+
+  // Restart simulation
+  simulation.nodes(nodes);
+  simulation.force('link').links(edges.map(e => ({
+    source: e.source,
+    target: e.target,
+  })));
+  simulation.alpha(0.5).restart();
+
+  updateNodeSelection();
+}
+
+function updateNodeSelection() {
+  nodeGroup.selectAll('.selected-ring')
+    .attr('r', d => d.id === selectedNode ? 16 : 0);
+}
+
+// ===== ACTIVITY FEED =====
+function addActivity(record) {
+  const feed = document.getElementById('activity-feed');
+  const item = document.createElement('div');
+  item.className = 'activity-item';
+  item.innerHTML = `
+    <span class="time">${timeAgo(record.timestamp)}</span>
+    <span class="status-badge ${record.status}">${record.status}</span>
+    <span class="cid-link" onclick="selectExperiment('${record.id}')">${shortCid(record.id)}</span>
+    <span>val_bpb=${record.val_bpb.toFixed(6)}</span>
+    <span style="color:var(--text-dim)">${record.description.slice(0,30)}</span>
+    <span style="color:var(--text-dim);margin-left:auto">${shortCid(record.node_id)}</span>
+  `;
+  feed.prepend(item);
+
+  // Keep max 100 items
+  while (feed.children.length > 100) feed.removeChild(feed.lastChild);
+}
+
+// ===== WEBSOCKET =====
+function connectWs() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const ws = new WebSocket(`${proto}//${location.host}/ws`);
+
+  ws.onopen = () => {
+    document.getElementById('ws-dot').classList.add('connected');
+  };
+
+  ws.onclose = () => {
+    document.getElementById('ws-dot').classList.remove('connected');
+    setTimeout(connectWs, 2000);  // Reconnect
+  };
+
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    if (msg.event === 'experiment') {
+      const record = msg.data;
+
+      // Add to graph data
+      const existing = graphData.node.find(n => n.id === record.id);
+      if (!existing) {
+        graphData.node.push(record);
+        if (record.parent) {
+          graphData.edge.push({ source: record.parent, target: record.id });
+        }
+      }
+
+      // Re-fetch frontier to update glow rings
+      fetchJson('/api/frontier').then(frontier => {
+        graphData.frontier_id = frontier.map(f => f.id);
+        renderDag();
+      });
+
+      addActivity(record);
+      refreshStat();
+    }
+  };
+}
+
+// ===== INIT =====
+async function init() {
+  initDag();
+
+  // Load initial data
+  const [graphResp] = await Promise.all([
+    fetchJson('/api/graph'),
+    refreshStat(),
+    refreshFrontier(),
+    refreshLeaderboard(),
+  ]);
+
+  graphData = graphResp;
+
+  // Populate activity feed with recent experiments
+  graphData.node
+    .sort((a, b) => b.timestamp - a.timestamp)
+    .slice(0, 50)
+    .forEach(addActivity);
+
+  renderDag();
+  connectWs();
+
+  // Periodic refresh
+  setInterval(() => {
+    refreshStat();
+    refreshFrontier();
+    refreshLeaderboard();
+  }, 10000);
+}
+
+init();
+</script>
+</body>
+</html>

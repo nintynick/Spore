@@ -1,0 +1,32 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# Runtime
+*.log
+data/
+result.tsv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# Test cache
+.pytest_cache/
+
+# Environment
+.env
+*.env
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Spore local state
+.spore/

@@ -1,0 +1,308 @@
+"""Gossip protocol — broadcast experiment records between peers.
+
+MVP uses raw TCP. Each message is a length-prefixed JSON payload.
+Wire format: 4-byte big-endian length + UTF-8 JSON body.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import struct
+from collections.abc import Callable
+
+from .record import ExperimentRecord
+
+log = logging.getLogger(__name__)
+
+HEADER_SIZE = 4  # 4-byte big-endian uint32 length prefix
+MAX_MESSAGE_SIZE = 10 * 1024 * 1024  # 10 MB
+
+
+class MessageType:
+    EXPERIMENT = "experiment"
+    SYNC_REQUEST = "sync_request"
+    SYNC_RESPONSE = "sync_response"
+    PING = "ping"
+    PONG = "pong"
+    PEX_REQUEST = "pex_request"
+    PEX_RESPONSE = "pex_response"
+    CHALLENGE = "challenge"
+    CHALLENGE_RESPONSE = "challenge_response"
+    DISPUTE = "dispute"
+
+
+def encode_message(msg_type: str, payload: dict) -> bytes:
+    """Encode a message as length-prefixed JSON."""
+    envelope = {"type": msg_type, "payload": payload}
+    body = json.dumps(envelope, separators=(",", ":")).encode("utf-8")
+    return struct.pack(">I", len(body)) + body
+
+
+async def read_message(reader: asyncio.StreamReader) -> dict | None:
+    """Read a length-prefixed JSON message from a stream."""
+    header = await reader.readexactly(HEADER_SIZE)
+    length = struct.unpack(">I", header)[0]
+    if length > MAX_MESSAGE_SIZE:
+        log.warning("Message too large: %d bytes", length)
+        return None
+    body = await reader.readexactly(length)
+    return json.loads(body.decode("utf-8"))
+
+
+class GossipServer:
+    """TCP server that accepts peer connections and gossips experiment records."""
+
+    def __init__(
+        self,
+        host: str = "0.0.0.0",
+        port: int = 7470,
+        on_experiment: Callable[[ExperimentRecord], None] | None = None,
+        on_sync_request: Callable[[int], list[ExperimentRecord]] | None = None,
+        on_new_peer: Callable[[str], None] | None = None,
+        on_challenge: Callable[[dict], None] | None = None,
+        on_challenge_response: Callable[[dict], None] | None = None,
+        on_dispute: Callable[[dict], None] | None = None,
+    ):
+        self.host = host
+        self.port = port
+        self.on_experiment = on_experiment
+        self.on_sync_request = on_sync_request
+        self.on_new_peer = on_new_peer
+        self.on_challenge = on_challenge
+        self.on_challenge_response = on_challenge_response
+        self.on_dispute = on_dispute
+        self.peers: dict[str, tuple[asyncio.StreamReader, asyncio.StreamWriter]] = {}
+        self.seen_cid: set[str] = set()
+        self._server: asyncio.Server | None = None
+        self._tasks: list[asyncio.Task] = []
+
+    async def start(self):
+        self._server = await asyncio.start_server(
+            self._handle_connection, self.host, self.port
+        )
+        log.info("Gossip server listening on %s:%d", self.host, self.port)
+
+    async def stop(self):
+        # Cancel all listen tasks
+        for task in self._tasks:
+            task.cancel()
+        for task in self._tasks:
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+        self._tasks.clear()
+
+        if self._server:
+            self._server.close()
+            await self._server.wait_closed()
+        for _, (_, writer) in self.peers.items():
+            writer.close()
+        self.peers.clear()
+
+    async def connect_to_peer(self, host: str, port: int) -> bool:
+        """Connect to a remote peer."""
+        addr = f"{host}:{port}"
+        if addr in self.peers:
+            return True
+        try:
+            reader, writer = await asyncio.open_connection(host, port)
+            self.peers[addr] = (reader, writer)
+            task = asyncio.create_task(self._listen(addr, reader))
+            self._tasks.append(task)
+            log.info("Connected to peer %s", addr)
+            return True
+        except Exception as e:
+            log.warning("Failed to connect to %s: %s", addr, e)
+            return False
+
+    async def broadcast_experiment(self, record: ExperimentRecord):
+        """Broadcast an experiment record to all connected peers."""
+        if record.id in self.seen_cid:
+            return
+        self.seen_cid.add(record.id)
+
+        msg = encode_message(
+            MessageType.EXPERIMENT,
+            json.loads(record.to_json()),
+        )
+        disconnected = []
+        for addr, (_, writer) in self.peers.items():
+            try:
+                writer.write(msg)
+                await writer.drain()
+            except Exception as e:
+                log.warning("Failed to send to %s: %s", addr, e)
+                disconnected.append(addr)
+
+        for addr in disconnected:
+            self._remove_peer(addr)
+
+    async def broadcast_challenge(self, payload: dict):
+        """Broadcast a challenge to all peers."""
+        await self._broadcast(MessageType.CHALLENGE, payload)
+
+    async def broadcast_challenge_response(self, payload: dict):
+        """Broadcast a challenge response to all peers."""
+        await self._broadcast(MessageType.CHALLENGE_RESPONSE, payload)
+
+    async def broadcast_dispute(self, payload: dict):
+        """Broadcast a resolved dispute to all peers."""
+        await self._broadcast(MessageType.DISPUTE, payload)
+
+    async def _broadcast(self, msg_type: str, payload: dict):
+        """Broadcast a message to all connected peers."""
+        msg = encode_message(msg_type, payload)
+        for addr, (_, writer) in self.peers.items():
+            try:
+                writer.write(msg)
+                await writer.drain()
+            except Exception:
+                pass
+
+    async def request_pex(self, addr: str):
+        """Ask a peer for its peer list."""
+        if addr not in self.peers:
+            return
+        _, writer = self.peers[addr]
+        msg = encode_message(MessageType.PEX_REQUEST, {})
+        writer.write(msg)
+        await writer.drain()
+
+    async def request_sync(self, addr: str, since_timestamp: int = 0):
+        """Request all experiments from a peer since a given timestamp."""
+        if addr not in self.peers:
+            return
+        _, writer = self.peers[addr]
+        msg = encode_message(
+            MessageType.SYNC_REQUEST,
+            {"since": since_timestamp},
+        )
+        writer.write(msg)
+        await writer.drain()
+
+    async def _handle_connection(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ):
+        peername = writer.get_extra_info("peername")
+        addr = f"{peername[0]}:{peername[1]}" if peername else "unknown"
+        self.peers[addr] = (reader, writer)
+        log.info("Peer connected: %s", addr)
+        task = asyncio.create_task(self._listen(addr, reader))
+        self._tasks.append(task)
+
+    async def _listen(self, addr: str, reader: asyncio.StreamReader):
+        try:
+            while True:
+                msg = await read_message(reader)
+                if msg is None:
+                    break
+                await self._handle_message(addr, msg)
+        except asyncio.CancelledError:
+            return
+        except (asyncio.IncompleteReadError, ConnectionError):
+            log.info("Peer disconnected: %s", addr)
+        finally:
+            self._remove_peer(addr)
+
+    async def _handle_message(self, addr: str, msg: dict):
+        msg_type = msg.get("type")
+        payload = msg.get("payload", {})
+
+        if msg_type == MessageType.EXPERIMENT:
+            record = ExperimentRecord.from_json(payload)
+            if record.id in self.seen_cid:
+                return  # already seen (dedup)
+
+            if not record.verify_cid():
+                log.warning("Invalid CID from %s, dropping", addr)
+                return
+
+            if not record.verify_signature():
+                log.warning("Invalid signature from %s, dropping", addr)
+                return
+
+            self.seen_cid.add(record.id)
+            if self.on_experiment:
+                self.on_experiment(record)
+
+            # Re-gossip to other peers (fan-out)
+            await self._regossip(record, exclude=addr)
+
+        elif msg_type == MessageType.SYNC_REQUEST:
+            since = payload.get("since", 0)
+            if self.on_sync_request and addr in self.peers:
+                records = self.on_sync_request(since)
+                _, writer = self.peers[addr]
+                for record in records:
+                    exp_msg = encode_message(
+                        MessageType.EXPERIMENT,
+                        json.loads(record.to_json()),
+                    )
+                    writer.write(exp_msg)
+                    await writer.drain()
+                log.info("Sync response: sent %d records to %s", len(records), addr)
+
+        elif msg_type == MessageType.PEX_REQUEST:
+            peer_list = [a for a in self.peers if a != addr]
+            if addr in self.peers:
+                _, writer = self.peers[addr]
+                pex_msg = encode_message(MessageType.PEX_RESPONSE, {"peer": peer_list})
+                writer.write(pex_msg)
+                await writer.drain()
+                log.info("PEX: sent %d peers to %s", len(peer_list), addr)
+
+        elif msg_type == MessageType.PEX_RESPONSE:
+            new_peer = payload.get("peer", [])
+            for peer_addr in new_peer:
+                if peer_addr not in self.peers:
+                    parts = peer_addr.split(":")
+                    if len(parts) == 2:
+                        connected = await self.connect_to_peer(parts[0], int(parts[1]))
+                        if connected and self.on_new_peer:
+                            self.on_new_peer(peer_addr)
+            log.info("PEX: received %d peers from %s", len(new_peer), addr)
+
+        elif msg_type == MessageType.CHALLENGE:
+            if self.on_challenge:
+                self.on_challenge(payload)
+
+        elif msg_type == MessageType.CHALLENGE_RESPONSE:
+            if self.on_challenge_response:
+                self.on_challenge_response(payload)
+
+        elif msg_type == MessageType.DISPUTE:
+            if self.on_dispute:
+                self.on_dispute(payload)
+
+        elif msg_type == MessageType.PING:
+            if addr in self.peers:
+                _, writer = self.peers[addr]
+                writer.write(encode_message(MessageType.PONG, {}))
+                await writer.drain()
+
+    async def _regossip(self, record: ExperimentRecord, exclude: str):
+        """Forward an experiment to all peers except the source."""
+        msg = encode_message(
+            MessageType.EXPERIMENT,
+            json.loads(record.to_json()),
+        )
+        for addr, (_, writer) in self.peers.items():
+            if addr == exclude:
+                continue
+            try:
+                writer.write(msg)
+                await writer.drain()
+            except Exception:
+                pass
+
+    def _remove_peer(self, addr: str):
+        if addr in self.peers:
+            _, writer = self.peers[addr]
+            try:
+                writer.close()
+            except Exception:
+                pass
+            del self.peers[addr]
