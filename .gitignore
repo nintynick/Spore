@@ -24,6 +24,9 @@ result.tsv
 .env
 *.env
 
+# Publish
+publish.sh
+
 # OS
 .DS_Store
 Thumbs.db

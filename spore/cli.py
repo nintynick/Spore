@@ -146,7 +146,9 @@ def run(
                 )
                 server = uvicorn.Server(uvi_config)
                 asyncio.create_task(server.serve())
-                console.print(f"  Explorer: [link=http://localhost:{web_port}]http://localhost:{web_port}[/link]")
+                console.print(
+                    f"  Explorer: [link=http://localhost:{web_port}]http://localhost:{web_port}[/link]"
+                )
             except Exception:
                 console.print("  [dim]Explorer failed to start (non-fatal)[/]")
         else:
