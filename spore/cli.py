@@ -59,6 +59,7 @@ def init():
 
 @cli.command()
 @click.option("--port", "-p", default=7470, help="Gossip listen port")
+@click.option("--web-port", "-w", default=8470, help="Explorer web UI port")
 @click.option("--peer", "-c", multiple=True, help="Peer address (host:port)")
 @click.option("--no-train", is_flag=True, help="Sync-only mode (no experiment runner)")
 @click.option(
@@ -78,6 +79,7 @@ def init():
 )
 def run(
     port: int,
+    web_port: int,
     peer: tuple[str, ...],
     no_train: bool,
     genesis: bool,
@@ -137,17 +139,17 @@ def run(
         await node.start(skip_peer=genesis)
 
         # Start explorer web UI (non-fatal if it fails)
-        web_port = _find_available_port(8470)
-        if web_port:
+        actual_web_port = _find_available_port(web_port)
+        if actual_web_port:
             try:
                 app = create_app(node)
                 uvi_config = uvicorn.Config(
-                    app, host="0.0.0.0", port=web_port, log_level="warning"
+                    app, host="0.0.0.0", port=actual_web_port, log_level="warning"
                 )
                 server = uvicorn.Server(uvi_config)
                 asyncio.create_task(server.serve())
                 console.print(
-                    f"  Explorer: [link=http://localhost:{web_port}]http://localhost:{web_port}[/link]"
+                    f"  Explorer: [link=http://localhost:{actual_web_port}]http://localhost:{actual_web_port}[/link]"
                 )
             except Exception:
                 console.print("  [dim]Explorer failed to start (non-fatal)[/]")
