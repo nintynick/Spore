@@ -390,19 +390,25 @@ def _configure_logging():
 def _print_banner(
     node: SporeNode, port: int, peer: list[str], mode: str, resource: int = 100
 ):
+    from rich.panel import Panel
+    from rich.table import Table
+
     try:
         ver = importlib.metadata.version("sporemesh")
     except importlib.metadata.PackageNotFoundError:
         from . import __version__ as ver
-    console.print(f"\n[bold]Spore[/] [dim]v{ver}[/]")
-    console.print(f"  Node ID:   [cyan]{node.node_id[:16]}...[/]")
-    console.print(f"  Port:      {port}")
-    console.print(f"  Peer:      {len(peer)} configured")
-    console.print(f"  Data:      {node.data_dir}")
-    console.print(f"  Resource:  {resource}%")
-    console.print(f"  Mode:      {mode}")
-    if mode == "foreground":
-        console.print("  [dim]Ctrl+C to stop | 'spore start' for background mode[/]")
+
+    grid = Table.grid(padding=(0, 2))
+    grid.add_column(style="dim")
+    grid.add_column()
+    grid.add_row("Node", f"[cyan]{node.node_id[:16]}...[/]")
+    grid.add_row("Port", str(port))
+    grid.add_row("Peer", f"{len(peer)} configured")
+    grid.add_row("Resource", f"{resource}%")
+    grid.add_row("Mode", f"[bold]{mode}[/]")
+
+    console.print()
+    console.print(Panel(grid, title=f"[bold]Spore[/] [dim]v{ver}[/]", border_style="cyan", expand=False))
     console.print()
 
 

@@ -17,6 +17,8 @@ import logging
 import re
 from pathlib import Path
 
+from rich.console import Console
+
 from .agent import AgentCoordinator
 from .llm import LLMClient
 from .llm import load_config as load_llm_config
@@ -24,6 +26,7 @@ from .node import SporeNode
 from .runner import ExperimentRunner
 
 log = logging.getLogger(__name__)
+console = Console()
 
 SYSTEM_PROMPT = """\
 You are an autonomous ML researcher optimizing a language model pretraining script.
@@ -83,10 +86,10 @@ class ExperimentLoop:
 
     async def _run_baseline(self) -> bool:
         """Run train.py as-is to establish baseline val_bpb."""
-        log.info("Running baseline (this takes ~5 minutes)...")
+        console.print("\n[bold]Running baseline...[/]\n")
         result = await asyncio.to_thread(self.runner.run_training)
         if not result.success:
-            log.error("Baseline crashed: %s", result.error)
+            console.print(f"[red]Baseline failed: {result.error}[/]")
             return False
 
         code = self.runner.get_code()
@@ -94,11 +97,7 @@ class ExperimentLoop:
             result, parent=None, diff="", description="baseline", agent="baseline"
         )
         await self.node.publish_experiment(record, code=code)
-        log.info(
-            "Baseline published: val_bpb=%.6f peak_vram=%.0fMB",
-            result.val_bpb,
-            result.peak_vram_mb,
-        )
+        console.print("[green]Baseline published to graph.[/]\n")
         return True
 
     async def _run_one(self):
@@ -116,18 +115,18 @@ class ExperimentLoop:
         )
         prompt = self.coordinator.format_prompt(context)
 
-        log.info("Asking LLM for proposal (parent val_bpb=%.6f)...", parent.val_bpb)
+        console.print(f"[dim]Proposing change (parent val_bpb={parent.val_bpb:.6f})...[/]")
         response = await asyncio.to_thread(self.llm.chat, SYSTEM_PROMPT, prompt)
 
         new_code = _extract_code(response)
         if not new_code:
-            log.warning("LLM response had no code block, skipping")
+            console.print("[yellow]LLM response had no code block, skipping[/]")
             return
 
         # Apply, run, record
         old_code = current_code
         description = _extract_description(response)
-        log.info("Running experiment: %s", description)
+        console.print(f"\n[bold]Experiment:[/] {description}\n")
 
         self.runner.apply_code(new_code)
         result = await asyncio.to_thread(self.runner.run_training)
@@ -146,15 +145,13 @@ class ExperimentLoop:
         # Keep or revert
         if result.success and result.val_bpb < parent.val_bpb:
             delta = parent.val_bpb - result.val_bpb
-            log.info("KEEP val_bpb=%.6f (improved by %.6f)", result.val_bpb, delta)
+            console.print(f"[bold green]KEEP[/] val_bpb={result.val_bpb:.6f} [green](improved by {delta:.6f})[/]\n")
         else:
             self.runner.apply_code(old_code)
             if result.success:
-                log.info(
-                    "DISCARD val_bpb=%.6f (parent=%.6f)", result.val_bpb, parent.val_bpb
-                )
+                console.print(f"[bold red]DISCARD[/] val_bpb={result.val_bpb:.6f} [dim](parent={parent.val_bpb:.6f})[/]\n")
             else:
-                log.info("CRASH: %s", result.error or "unknown")
+                console.print(f"[bold yellow]CRASH[/] {result.error or 'unknown'}\n")
 
     def _make_record(self, result, parent, diff, description, agent):
         return self.runner.make_record(
