@@ -72,7 +72,7 @@ class ExperimentRunner:
                 cwd=str(self.workspace),
                 capture_output=True,
                 text=True,
-                timeout=self.time_budget + 60,  # Extra margin
+                timeout=self.time_budget + 300,  # Extra margin for torch.compile warmup
             )
             elapsed = time.time() - start_time
             output = result.stdout + "\n" + result.stderr
