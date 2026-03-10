@@ -415,7 +415,11 @@ async function selectNode(nodeId) {
     </div>
   ` : '';
 
-  const experimentCards = payload.experiments.length ? payload.experiments.map(renderExperimentCard).join('') : `
+  const experiments = payload.experiments
+    .slice()
+    .sort((a, b) => (b.timestamp - a.timestamp) || (b.depth - a.depth) || b.id.localeCompare(a.id));
+
+  const experimentCards = experiments.length ? experiments.map(renderExperimentCard).join('') : `
     <div class="empty-panel">No experiments match the current node filters.</div>
   `;
 
