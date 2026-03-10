@@ -28,7 +28,9 @@ from .gpu import normalize_gpu_model
 from .graph import ResearchGraph
 from .profile import NodeProfile, NodeProfileStore
 from .record import ExperimentRecord, generate_keypair
+from .rewards import RewardEngine
 from .store import ArtifactStore
+from .token import TokenManager
 from .training_runtime import TrainingRuntime
 from .verify import ReputationStore, Verifier
 
@@ -96,6 +98,8 @@ class SporeNode:
         self.control = ControlStore(self.data_dir / "db" / "control.sqlite")
         self.reputation = ReputationStore(self.data_dir / "db" / "reputation.sqlite")
         self.reputation.backfill_published(self.graph.all_records())
+        self.token = TokenManager(self.data_dir / "db" / "token.sqlite")
+        self.reward_engine = RewardEngine(self.token)
         self.training = TrainingRuntime()
         self.artifact = ArtifactSync()
         # Verification
@@ -329,6 +333,7 @@ class SporeNode:
         self.profile.close()
         self.control.close()
         self.reputation.close()
+        self.token.close()
 
     def _load_known_peer(self) -> list[str]:
         """Load previously-seen peers from disk."""

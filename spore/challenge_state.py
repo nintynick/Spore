@@ -39,18 +39,22 @@ def apply_verification_event(node, verifier: Verifier, payload: dict):
     verifier_id = payload.get("verifier_id", "")
     if verifier_id:
         verifier.reputation.verification_performed(verifier_id)
+        # Token reward for verification work
+        if hasattr(node, "reward_engine"):
+            node.reward_engine.on_verification_performed(verifier_id)
 
     if not node.graph.is_verified(experiment_id):
-        verifier.reputation.record_verified(
-            payload.get("verified_node_id", record.node_id),
-            record,
-            is_frontier=bool(payload.get("is_frontier")),
-        )
+        verified_node = payload.get("verified_node_id", record.node_id)
+        is_frontier = bool(payload.get("is_frontier"))
+        verifier.reputation.record_verified(verified_node, record, is_frontier=is_frontier)
         node.graph.mark_verified(experiment_id, True)
+        # Token reward for verified experiment
+        if hasattr(node, "reward_engine"):
+            node.reward_engine.on_record_verified(verified_node, is_frontier=is_frontier)
 
 
 def apply_dispute_event(node, verifier: Verifier, payload: dict):
-    """Apply the reputation and verification effects of a dispute."""
+    """Apply the reputation, verification, and token effects of a dispute."""
     experiment_id = payload.get("experiment_id", "")
     event_id = payload.get(
         "event_id",
@@ -59,31 +63,47 @@ def apply_dispute_event(node, verifier: Verifier, payload: dict):
     if not verifier.reputation.record_event(event_id, "dispute"):
         return False
 
+    has_rewards = hasattr(node, "reward_engine")
     outcome = payload.get("outcome", "")
+
     if outcome == DisputeOutcome.UPHELD.value:
         record = node.graph.get(experiment_id)
         if record is not None and not node.graph.is_verified(experiment_id):
+            original_node = payload.get("original_node_id", record.node_id)
+            is_frontier = record.id in {r.id for r in node.graph.frontier()}
             verifier.reputation.record_verified(
-                payload.get("original_node_id", record.node_id),
-                record,
-                is_frontier=record.id in {r.id for r in node.graph.frontier()},
+                original_node, record, is_frontier=is_frontier,
             )
+            # Token reward for upheld experiment
+            if has_rewards:
+                node.reward_engine.on_record_verified(original_node, is_frontier=is_frontier)
         node.graph.mark_verified(experiment_id, True)
         challenger_id = payload.get("challenger_id", "")
         if challenger_id:
             verifier.reputation.penalize_wrong_dispute_side(challenger_id)
+            if has_rewards:
+                node.reward_engine.on_wrong_dispute_side(challenger_id)
+
     elif outcome == DisputeOutcome.REJECTED.value:
         challenger_id = payload.get("challenger_id", "")
         original_node_id = payload.get("original_node_id", "")
         if challenger_id:
             verifier.reputation.reward_successful_challenge(challenger_id)
+            if has_rewards:
+                node.reward_engine.on_successful_challenge(challenger_id)
         if original_node_id:
             verifier.reputation.penalize_rejected_experiment(original_node_id)
+            if has_rewards:
+                node.reward_engine.on_rejected_experiment(original_node_id)
 
     for verifier_id in payload.get("winner_verifier_ids", []):
         verifier.reputation.reward_winning_verifier(verifier_id)
+        if has_rewards:
+            node.reward_engine.on_winning_verifier(verifier_id)
     for verifier_id in payload.get("loser_verifier_ids", []):
         verifier.reputation.penalize_wrong_dispute_side(verifier_id)
+        if has_rewards:
+            node.reward_engine.on_wrong_dispute_side(verifier_id)
     return True
 
 

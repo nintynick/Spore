@@ -7,6 +7,8 @@ import pytest
 from spore.graph import ResearchGraph
 from spore.record import ExperimentRecord, Status, generate_keypair
 from spore.store import ArtifactStore
+from spore.token import TokenManager
+from spore.rewards import RewardEngine
 from spore.verify import ReputationStore
 
 
@@ -44,6 +46,20 @@ def reputation():
 def store(tmp_path):
     """Temporary artifact store."""
     return ArtifactStore(tmp_path / "artifact")
+
+
+@pytest.fixture
+def token_manager():
+    """In-memory token manager."""
+    tm = TokenManager(":memory:")
+    yield tm
+    tm.close()
+
+
+@pytest.fixture
+def reward_engine(token_manager):
+    """Reward engine backed by in-memory token manager."""
+    return RewardEngine(token_manager)
 
 
 def make_record(

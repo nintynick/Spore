@@ -672,10 +672,12 @@ def _handle_port_error(e: OSError, port: int):
 from .daemon import register_command as _register_daemon
 from .llm import register_command as _register_llm
 from .query import register_command as _register_query
+from .token_cli import register_command as _register_token
 
 _register_query(cli)
 _register_daemon(cli)
 _register_llm(cli)
+_register_token(cli)
 
 
 def main():
