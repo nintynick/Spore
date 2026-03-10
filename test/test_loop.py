@@ -4,7 +4,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from spore.loop import ExperimentLoop, _extract_metadata
+from spore.loop import (
+    ExperimentLoop,
+    _extract_metadata,
+    _is_valid_full_python_file,
+)
 
 
 @pytest.mark.asyncio
@@ -69,3 +73,27 @@ print("hello")
         description, hypothesis = _extract_metadata(response)
         assert description == "I increased the embedding LR from 0.6 to 0.8"
         assert hypothesis == "faster token adaptation should lower val_bpb"
+
+
+class TestCandidateCodeValidation:
+    def test_accepts_full_python_file(self):
+        body = "\n".join(f"x_{i} = {i}" for i in range(220))
+        code = (
+            "from prepare import MAX_SEQ_LEN\n"
+            f"{body}\n"
+            'print("val_bpb: 1.0")\n'
+            'print("num_steps: 10")\n'
+            'print("peak_vram_mb: 100")\n'
+        )
+        assert _is_valid_full_python_file(code) is True
+
+    def test_rejects_diff_like_snippet(self):
+        code = "-DEPTH = 8\n+DEPTH = 6\n"
+        assert _is_valid_full_python_file(code) is False
+
+    def test_rejects_invalid_python(self):
+        assert _is_valid_full_python_file("def x(:\n    pass\n") is False
+
+    def test_rejects_partial_file_without_required_anchors(self):
+        code = "import torch.nn as nn\n\nclass GPT(nn.Module):\n    pass\n"
+        assert _is_valid_full_python_file(code) is False

@@ -10,6 +10,7 @@ Each iteration:
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import difflib
 import hashlib
@@ -47,6 +48,21 @@ Return the FULL modified train.py inside a ```python code block.
 Before the code, write exactly two lines:
 Description: <what you changed>
 Hypothesis: <why it should improve val_bpb>"""
+
+REPAIR_PROMPT = """\
+Your previous response did not contain a valid full Python file.
+
+Return the FULL corrected train.py inside a single ```python code block.
+Do not return a diff, patch, explanation, or partial snippet.
+
+Current train.py:
+```python
+{current_code}
+```
+
+Previous invalid response:
+{response}
+"""
 
 
 class ExperimentLoop:
@@ -188,13 +204,15 @@ class ExperimentLoop:
         )
         response = await asyncio.to_thread(self.llm.chat, SYSTEM_PROMPT, prompt)
 
-        new_code = _extract_code(response)
+        old_code = current_code
+        new_code, response = await self._resolve_candidate_code(response, old_code)
         if not new_code:
-            console.print("[yellow]LLM response had no code block, skipping[/]")
+            console.print(
+                "[yellow]LLM response was not a valid full train.py, skipping[/]"
+            )
             return
 
         # Apply, run, record
-        old_code = current_code
         description, hypothesis = _extract_metadata(response)
         console.print(f"\n[bold]Experiment:[/] {description}\n")
 
@@ -248,6 +266,34 @@ class ExperimentLoop:
         path = self.workspace / filename
         return hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else ""
 
+    async def _resolve_candidate_code(
+        self, response: str, current_code: str
+    ) -> tuple[str | None, str]:
+        code = _extract_code(response)
+        if _is_valid_full_python_file(code):
+            return code, response
+
+        if code:
+            console.print(
+                "[yellow]LLM returned invalid or diff-like code, requesting a corrected full file.[/]"
+            )
+        else:
+            console.print(
+                "[yellow]LLM response had no usable code block, requesting a corrected full file.[/]"
+            )
+
+        repair_prompt = REPAIR_PROMPT.format(
+            current_code=current_code,
+            response=response,
+        )
+        repaired_response = await asyncio.to_thread(
+            self.llm.chat, SYSTEM_PROMPT, repair_prompt
+        )
+        repaired_code = _extract_code(repaired_response)
+        if _is_valid_full_python_file(repaired_code):
+            return repaired_code, repaired_response
+        return None, repaired_response
+
 
 def _extract_code(response: str) -> str | None:
     """Extract Python code block from LLM response."""
@@ -258,6 +304,43 @@ def _extract_code(response: str) -> str | None:
     if m:
         return m.group(1).strip()
     return None
+
+
+def _looks_like_diff(code: str) -> bool:
+    lines = [line for line in code.splitlines() if line.strip()]
+    if not lines:
+        return False
+    diff_markers = ("---", "+++", "@@")
+    if any(line.startswith(diff_markers) for line in lines):
+        return True
+    changed = sum(
+        1
+        for line in lines
+        if (line.startswith("+") or line.startswith("-"))
+        and not line.startswith(("+ ", "- "))
+    )
+    return changed >= max(2, len(lines) // 3)
+
+
+def _is_valid_full_python_file(code: str | None) -> bool:
+    if not code or _looks_like_diff(code) or not _looks_like_full_train_file(code):
+        return False
+    try:
+        ast.parse(code)
+    except SyntaxError:
+        return False
+    return True
+
+
+def _looks_like_full_train_file(code: str) -> bool:
+    lines = [line for line in code.splitlines() if line.strip()]
+    required_tokens = (
+        "from prepare import",
+        "val_bpb:",
+        "num_steps:",
+        "peak_vram_mb:",
+    )
+    return len(lines) >= 200 and all(token in code for token in required_tokens)
 
 
 def _extract_metadata(response: str) -> tuple[str, str]:
