@@ -42,6 +42,41 @@ def test_remote_experiment_records_publish_without_storing_fake_code(tmp_path, k
 
 
 @pytest.mark.asyncio
+async def test_start_requests_pex_before_sync(tmp_path, monkeypatch):
+    node = SporeNode(NodeConfig(port=0, data_dir=str(tmp_path)))
+    calls: list[tuple[str, str]] = []
+
+    async def fake_start():
+        return None
+
+    async def fake_connect(host: str, port: int) -> bool:
+        calls.append(("connect", f"{host}:{port}"))
+        return True
+
+    async def fake_request_pex(addr: str):
+        calls.append(("pex", addr))
+
+    async def fake_request_sync(addr: str, since_timestamp: int = 0):
+        calls.append(("sync", addr))
+
+    monkeypatch.setattr(node.gossip, "start", fake_start)
+    monkeypatch.setattr(node.gossip, "connect_to_peer", fake_connect)
+    monkeypatch.setattr(node.gossip, "request_pex", fake_request_pex)
+    monkeypatch.setattr(node.gossip, "request_sync", fake_request_sync)
+
+    await node.start()
+
+    assert calls == [
+        ("connect", "188.36.196.221:42208"),
+        ("pex", "188.36.196.221:42208"),
+        ("sync", "188.36.196.221:42208"),
+    ]
+
+    node.graph.close()
+    node.reputation.close()
+
+
+@pytest.mark.asyncio
 async def test_fetch_code_retries_newly_discovered_peers(tmp_path, monkeypatch):
     node = SporeNode(NodeConfig(port=0, data_dir=str(tmp_path)))
     code_bytes = b"print('frontier')\n"

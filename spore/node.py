@@ -257,8 +257,8 @@ class SporeNode:
                 connected = await self.gossip.connect_to_peer(host, port)
                 if connected:
                     self._save_peer(peer_addr)
-                    await self.gossip.request_sync(peer_addr)
                     await self.gossip.request_pex(peer_addr)
+                    await self.gossip.request_sync(peer_addr)
 
     async def stop(self):
         await self.gossip.stop()
