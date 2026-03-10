@@ -474,7 +474,7 @@ def _copy_workspace_file():
     from importlib.resources import files
 
     workspace_pkg = files("spore.workspace")
-    for filename in ("train.py", "prepare.py"):
+    for filename in ("train.py", "prepare.py", "batching.py"):
         dest = Path.cwd() / filename
         if not dest.exists():
             src = workspace_pkg / filename

@@ -75,6 +75,22 @@ def _peak_memory_mb():
 
 from prepare import MAX_SEQ_LEN, TIME_BUDGET, Tokenizer, evaluate_bpb, make_dataloader
 
+try:
+    from batching import scale_device_batch_size
+except Exception:
+
+    def scale_device_batch_size(
+        base_batch_size: int,
+        resource_pct: int,
+        total_batch_size: int,
+        max_seq_len: int,
+    ) -> int:
+        requested = max(1, int(base_batch_size * resource_pct / 100))
+        for batch_size in range(requested, 0, -1):
+            if total_batch_size % (batch_size * max_seq_len) == 0:
+                return batch_size
+        return 1
+
 # ---------------------------------------------------------------------------
 # GPT Model
 # ---------------------------------------------------------------------------
@@ -647,11 +663,22 @@ def _auto_batch_size():
     return 4
 
 
-DEVICE_BATCH_SIZE = _auto_batch_size()
+_base_device_batch_size = _auto_batch_size()
 
 # Resource scaling: SPORE_RESOURCE env var (1-100 percent of batch size)
-_resource_pct = int(os.environ.get("SPORE_RESOURCE", "100"))
-DEVICE_BATCH_SIZE = max(1, int(DEVICE_BATCH_SIZE * _resource_pct / 100))
+_resource_pct = max(1, min(100, int(os.environ.get("SPORE_RESOURCE", "100"))))
+_requested_device_batch_size = max(
+    1, int(_base_device_batch_size * _resource_pct / 100)
+)
+DEVICE_BATCH_SIZE = scale_device_batch_size(
+    _base_device_batch_size, _resource_pct, TOTAL_BATCH_SIZE, MAX_SEQ_LEN
+)
+if DEVICE_BATCH_SIZE != _base_device_batch_size or _resource_pct != 100:
+    print(
+        "Resource scaling:"
+        f" {_resource_pct}% -> device_batch_size={DEVICE_BATCH_SIZE}"
+        f" (requested {_requested_device_batch_size}, base {_base_device_batch_size})"
+    )
 
 # ---------------------------------------------------------------------------
 # Setup: tokenizer, model, optimizer, dataloader
