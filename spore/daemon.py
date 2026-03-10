@@ -36,9 +36,15 @@ def register_command(cli: click.Group):
 
     @cli.command()
     @click.option("--port", "-p", default=7470, help="Gossip listen port")
+    @click.option("--web-port", "-w", default=8470, help="Explorer web UI port")
     @click.option("--peer", "-c", multiple=True, help="Peer address (host:port)")
     @click.option(
         "--no-train", is_flag=True, help="Sync-only mode (no experiment runner)"
+    )
+    @click.option(
+        "--verify-only",
+        is_flag=True,
+        help="Verifier-only mode (prepare workspace, verify remote experiments, no LLM loop)",
     )
     @click.option(
         "--genesis",
@@ -57,8 +63,10 @@ def register_command(cli: click.Group):
     )
     def start(
         port: int,
+        web_port: int,
         peer: tuple[str, ...],
         no_train: bool,
+        verify_only: bool,
         genesis: bool,
         resource: int,
         data_dir: str | None,
@@ -77,11 +85,22 @@ def register_command(cli: click.Group):
 
         data_path.mkdir(parents=True, exist_ok=True)
 
-        cmd = [sys.executable, "-m", "spore.cli", "run", "--port", str(port)]
+        cmd = [
+            sys.executable,
+            "-m",
+            "spore.cli",
+            "run",
+            "--port",
+            str(port),
+            "--web-port",
+            str(web_port),
+        ]
         for p in peer:
             cmd.extend(["--peer", p])
         if no_train:
             cmd.append("--no-train")
+        if verify_only:
+            cmd.append("--verify-only")
         if genesis:
             cmd.append("--genesis")
         if resource != 100:
