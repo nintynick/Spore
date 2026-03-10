@@ -196,13 +196,16 @@ That means:
 Current score semantics:
 
 - published count is tracked separately and does not itself change score
-- successful verification of a record rewards the publisher
-- performing a verification rewards the verifier
-- dispute winners and losers get asymmetric outcomes
+- verified `keep` rewards the publisher
+- verified frontier `keep` rewards the publisher more
+- routine verification does not itself reward the verifier
+- successful challenge and being on the winning side of a resolved dispute reward the participant
+- wrong-side dispute participation and rejected published claims are penalized
 
 The wrong behavior that used to exist and must never return:
 
 - issuing a challenge by itself must not earn verification credit
+- raw verification volume must not farm score
 
 ## 10. Artifact Program
 
@@ -219,7 +222,24 @@ The practical consequence is important:
 
 experiment gossip can look healthy while verification still fails if artifact availability is weak.
 
-## 11. Hardware Classes
+## 11. Signed Control Facts
+
+Challenge, challenge-response, verification, and dispute messages are now protocol facts, not just transient live gossip.
+
+Design rules:
+
+- each control event is Ed25519-signed by the acting node
+- the signer must match the actor field in the payload
+- events are stored durably in a separate local control-event store
+- peers replay stored signed control events on reconnect
+- reputation changes derive from those replayable facts plus local idempotence
+
+This is the intended blend:
+
+- LimeWire-like transport and availability
+- signed, replayable protocol facts for anything that changes reputation
+
+## 12. Hardware Classes
 
 Spore currently uses normalized verification classes rather than raw device names.
 
@@ -237,7 +257,7 @@ Future work should include richer capability bucketing for:
 - CPU nodes
 - mixed-memory or throughput-variant GPUs
 
-## 12. Resource Control
+## 13. Resource Control
 
 `--resource N` scales batch size, but only within the runtime assumptions of the applied `train.py`.
 
@@ -251,7 +271,7 @@ This is the important distinction:
 - package runtime fixes affect the host
 - frontier `train.py` remains experiment content and can carry older assumptions
 
-## 13. Recommended Live Topology
+## 14. Recommended Live Topology
 
 For a small public network:
 

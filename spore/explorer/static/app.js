@@ -1,327 +1,477 @@
 // Spore Explorer — main application
 
 import {
-  getStat, getGraph, getFrontier, getExperiment, getAncestor,
-  getChildren, getLeaderboard, getNodeReputation, searchExperiment, getArtifact,
-  getNodeProfile,
-  shortCid, formatParam, statusColor, timeAgo, escHtml,
+  formatDateTime,
+  formatParam,
+  getArtifact,
+  getAncestor,
+  getChildren,
+  getExperiment,
+  getFrontier,
+  getGraph,
+  getLeaderboard,
+  getNodeDetail,
+  getNodes,
+  getStat,
+  searchExperiment,
+  searchNodes,
+  shortCid,
+  statusColor,
+  timeAgo,
+  escHtml,
 } from './api.js';
 import { initDag, renderDag, updateSelection, resetHighlight } from './dag.js';
 
-// ===== STATE =====
-let graphData = { node: [], edge: [], frontier_id: [] };
-let selectedNode = null;
-let statusFilter = 'all';
-let searchTimeout = null;
+const state = {
+  graphData: { node: [], edge: [], frontier_id: [] },
+  selectedExperimentId: null,
+  selectedNodeId: null,
+  detailMode: 'empty',
+  statusFilter: 'all',
+  searchTimeout: null,
+  nodeFilters: {
+    activity: 'all',
+    status: 'all',
+    has_profile: 'all',
+    sort: 'recent',
+  },
+  nodeDetailFilters: {
+    status: 'all',
+    verified_only: false,
+    frontier_only: false,
+  },
+};
 
-// ===== TABS =====
-document.querySelectorAll('.tab-bar button').forEach(btn => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('.tab-bar button').forEach(b => b.classList.remove('active'));
-    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-    btn.classList.add('active');
-    document.getElementById(btn.dataset.tab).classList.add('active');
-  });
-});
-
-// ===== SEARCH =====
+const detailTitle = document.getElementById('detail-title');
+const detailSubtitle = document.getElementById('detail-subtitle');
+const detailEmpty = document.getElementById('detail-empty');
+const detailContent = document.getElementById('detail-content');
 const searchInput = document.getElementById('search-input');
 const searchResult = document.getElementById('search-result');
 
-searchInput.addEventListener('input', () => {
-  clearTimeout(searchTimeout);
-  const q = searchInput.value.trim();
-  if (q.length < 2) {
-    searchResult.classList.remove('open');
-    return;
-  }
-  searchTimeout = setTimeout(async () => {
-    const results = await searchExperiment(q);
-    renderSearchResult(results);
-  }, 200);
-});
+const nodeFilterEls = {
+  activity: document.getElementById('node-activity-filter'),
+  status: document.getElementById('node-status-filter'),
+  has_profile: document.getElementById('node-profile-filter'),
+  sort: document.getElementById('node-sort-filter'),
+};
 
-searchInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') {
-    searchResult.classList.remove('open');
-    searchInput.blur();
-  }
-});
+function initialsFromName(name) {
+  const source = (name || '').trim();
+  if (!source) return 'SP';
+  return source
+    .split(/\s+/)
+    .slice(0, 2)
+    .map(part => part[0]?.toUpperCase() || '')
+    .join('') || source.slice(0, 2).toUpperCase();
+}
 
-document.addEventListener('click', (e) => {
-  if (!e.target.closest('.search-wrap')) {
-    searchResult.classList.remove('open');
+function safeUrl(url) {
+  if (!url) return '';
+  try {
+    const parsed = new URL(url, window.location.origin);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return parsed.href;
+    }
+  } catch (_) {
+    return '';
   }
-});
+  return '';
+}
 
-function renderSearchResult(results) {
-  if (results.length === 0) {
-    searchResult.classList.remove('open');
-    return;
+function renderAvatar(url, label, size = 'md') {
+  const safe = safeUrl(url);
+  if (safe) {
+    return `<img class="avatar avatar-${size}" src="${safe}" alt="${escHtml(label || 'Node avatar')}">`;
   }
-  searchResult.innerHTML = results.map(r => `
-    <div class="search-item" data-cid="${r.id}">
-      <span class="status-badge ${r.status}">${r.status}</span>
-      <span style="color:var(--cyan)">${shortCid(r.id)}</span>
-      <span style="color:var(--text)">${r.val_bpb.toFixed(6)}</span>
-      <span style="color:var(--text-dim)">${escHtml(r.node_display_name || shortCid(r.node_id))}</span>
-      <span style="color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">${escHtml(r.description.slice(0, 60))}</span>
+  return `<div class="avatar avatar-${size} avatar-fallback">${escHtml(initialsFromName(label))}</div>`;
+}
+
+function activityClass(activity) {
+  return activity || 'observer';
+}
+
+function renderActivityBadge(activity) {
+  const label = activity || 'observer';
+  return `<span class="activity-badge ${activityClass(label)}">${escHtml(label)}</span>`;
+}
+
+function renderFlagPills(record) {
+  const pills = [];
+  if (record.verified) pills.push('<span class="mini-pill verified">verified</span>');
+  if (record.is_frontier) pills.push('<span class="mini-pill frontier">frontier</span>');
+  return pills.join('');
+}
+
+function renderNodeName(summary, opts = {}) {
+  const display = summary.display_name || shortCid(summary.node_id);
+  const subtitle = opts.hideSubtitle ? '' : `<div class="muted-cid">${shortCid(summary.node_id)}</div>`;
+  return `
+    <div class="entity">
+      ${renderAvatar(summary.avatar_url, display, opts.avatarSize || 'sm')}
+      <div class="entity-copy">
+        <div class="entity-title">${escHtml(display)}</div>
+        ${subtitle}
+      </div>
     </div>
-  `).join('');
+  `;
+}
+
+function setDetailHeader(title, subtitle = '') {
+  detailTitle.textContent = title;
+  detailSubtitle.textContent = subtitle;
+}
+
+function showDetail(html) {
+  detailEmpty.style.display = 'none';
+  detailContent.style.display = 'block';
+  detailContent.innerHTML = html;
+}
+
+function clearDetail() {
+  state.selectedExperimentId = null;
+  state.selectedNodeId = null;
+  state.detailMode = 'empty';
+  setDetailHeader('Detail', 'Choose an experiment or node');
+  detailContent.style.display = 'none';
+  detailEmpty.style.display = 'block';
+  resetHighlight();
+}
+
+function getFilteredGraph() {
+  if (state.statusFilter === 'all') return state.graphData;
+  const filtered = state.graphData.node.filter(node => node.status === state.statusFilter);
+  const ids = new Set(filtered.map(node => node.id));
+  return {
+    node: filtered,
+    edge: state.graphData.edge.filter(edge => ids.has(edge.source) && ids.has(edge.target)),
+    frontier_id: state.graphData.frontier_id.filter(id => ids.has(id)),
+  };
+}
+
+function activateTab(tabId) {
+  document.querySelectorAll('.tab-bar button').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.tab === tabId);
+  });
+  document.querySelectorAll('.tab-content').forEach(content => {
+    content.classList.toggle('active', content.id === tabId);
+  });
+  if (tabId === 'nodes-tab') {
+    refreshNodes();
+  }
+}
+
+function renderSearchResult(experiments, nodes) {
+  if (experiments.length === 0 && nodes.length === 0) {
+    searchResult.classList.remove('open');
+    return;
+  }
+
+  const nodeHtml = nodes.length ? `
+    <div class="search-section-title">Nodes</div>
+    ${nodes.map(node => `
+      <div class="search-item search-item-node" data-kind="node" data-node-id="${node.node_id}">
+        ${renderAvatar(node.avatar_url, node.display_name || node.node_id, 'xs')}
+        <div class="search-stack">
+          <div class="search-main">
+            <span>${escHtml(node.display_name || shortCid(node.node_id))}</span>
+            ${renderActivityBadge(node.activity)}
+          </div>
+          <div class="search-sub">${escHtml(node.bio || shortCid(node.node_id))}</div>
+        </div>
+      </div>
+    `).join('')}
+  ` : '';
+
+  const experimentHtml = experiments.length ? `
+    <div class="search-section-title">Experiments</div>
+    ${experiments.map(record => `
+      <div class="search-item" data-kind="experiment" data-cid="${record.id}">
+        <span class="status-badge ${record.status}">${record.status}</span>
+        <span style="color:var(--cyan)">${shortCid(record.id)}</span>
+        <span style="color:var(--text)">${record.val_bpb.toFixed(6)}</span>
+        <span style="color:var(--text-dim)">${escHtml(record.node_display_name || shortCid(record.node_id))}</span>
+        <span class="search-desc">${escHtml(record.description.slice(0, 60))}</span>
+      </div>
+    `).join('')}
+  ` : '';
+
+  searchResult.innerHTML = nodeHtml + experimentHtml;
   searchResult.classList.add('open');
 
   searchResult.querySelectorAll('.search-item').forEach(el => {
     el.addEventListener('click', () => {
-      selectExperiment(el.dataset.cid);
+      if (el.dataset.kind === 'node') {
+        selectNode(el.dataset.nodeId);
+      } else {
+        selectExperiment(el.dataset.cid);
+      }
       searchResult.classList.remove('open');
       searchInput.value = '';
     });
   });
 }
 
-// ===== FILTER =====
-document.querySelectorAll('.filter-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    statusFilter = btn.dataset.filter;
-    renderDag(getFilteredGraph(), selectedNode);
-  });
-});
-
-function getFilteredGraph() {
-  if (statusFilter === 'all') return graphData;
-  const filtered = graphData.node.filter(n => n.status === statusFilter);
-  const ids = new Set(filtered.map(n => n.id));
-  return {
-    node: filtered,
-    edge: graphData.edge.filter(e => ids.has(e.source) && ids.has(e.target)),
-    frontier_id: graphData.frontier_id.filter(id => ids.has(id)),
-  };
-}
-
-// ===== STATS =====
 async function refreshStat() {
-  const s = await getStat();
-  document.getElementById('stat-total').textContent = s.experiment_count;
-  document.getElementById('stat-frontier').textContent = s.frontier_size;
-  document.getElementById('stat-best').textContent = s.best_val_bpb != null ? s.best_val_bpb.toFixed(6) : '—';
-  document.getElementById('stat-peer').textContent = s.peer_count;
-  document.getElementById('hdr-node').textContent = shortCid(s.node_id);
+  const stat = await getStat();
+  document.getElementById('stat-total').textContent = stat.experiment_count;
+  document.getElementById('stat-nodes').textContent = stat.node_count ?? '—';
+  document.getElementById('stat-frontier').textContent = stat.frontier_size;
+  document.getElementById('stat-best').textContent = stat.best_val_bpb != null ? stat.best_val_bpb.toFixed(6) : '—';
+  document.getElementById('stat-peer').textContent = stat.peer_count;
+  document.getElementById('hdr-node').textContent = shortCid(stat.node_id);
 }
 
-// ===== FRONTIER TABLE =====
 async function refreshFrontier() {
   const data = await getFrontier();
   const tbody = document.querySelector('#frontier-table tbody');
   tbody.innerHTML = '';
-  data.forEach(r => {
+  data.forEach(record => {
     const tr = document.createElement('tr');
     tr.className = 'clickable';
-    tr.onclick = () => selectExperiment(r.id);
+    tr.onclick = () => selectExperiment(record.id);
     tr.innerHTML = `
-      <td style="color:var(--cyan)">${shortCid(r.id)}</td>
-      <td style="color:var(--green)">${r.val_bpb.toFixed(6)}</td>
-      <td>${r.depth}</td>
-      <td>${r.gpu_model || '—'}</td>
-      <td>${r.num_steps}</td>
-      <td>${formatParam(r.num_params)}</td>
-      <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis">${escHtml(r.description.slice(0, 80))}</td>
+      <td style="color:var(--cyan)">${shortCid(record.id)}</td>
+      <td style="color:var(--green)">${record.val_bpb.toFixed(6)}</td>
+      <td>${record.depth}</td>
+      <td>${escHtml(record.gpu_model || '—')}</td>
+      <td>${record.num_steps}</td>
+      <td>${formatParam(record.num_params)}</td>
+      <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis">${escHtml(record.description.slice(0, 90))}</td>
     `;
     tbody.appendChild(tr);
   });
 }
 
-// ===== LEADERBOARD =====
+async function refreshNodes() {
+  const params = {
+    activity: state.nodeFilters.activity,
+    status: state.nodeFilters.status,
+    sort: state.nodeFilters.sort,
+  };
+  if (state.nodeFilters.has_profile !== 'all') {
+    params.has_profile = state.nodeFilters.has_profile;
+  }
+  const data = await getNodes(params);
+  const tbody = document.querySelector('#node-table tbody');
+  tbody.innerHTML = '';
+
+  if (data.length === 0) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td colspan="8" class="empty-row">No nodes match the current filters</td>';
+    tbody.appendChild(tr);
+    return;
+  }
+
+  data.forEach(node => {
+    const tr = document.createElement('tr');
+    tr.className = 'clickable';
+    tr.onclick = () => selectNode(node.node_id);
+    tr.innerHTML = `
+      <td>${renderNodeName(node, { avatarSize: 'xs' })}</td>
+      <td>${renderActivityBadge(node.activity)}</td>
+      <td style="color:${node.reputation.score >= 0 ? 'var(--green)' : 'var(--red)'}">${node.reputation.score.toFixed(1)}</td>
+      <td>${node.experiment_count}</td>
+      <td>${node.keep_count}</td>
+      <td>${node.frontier_count}</td>
+      <td title="${escHtml((node.gpu_models || []).join(', '))}">${escHtml((node.gpu_models || []).slice(0, 2).join(', ') || '—')}</td>
+      <td>${timeAgo(node.last_seen)}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
 async function refreshLeaderboard() {
   const data = await getLeaderboard();
   const tbody = document.querySelector('#leaderboard-table tbody');
   tbody.innerHTML = '';
   if (data.length === 0) {
     const tr = document.createElement('tr');
-    tr.innerHTML = '<td colspan="7" style="color:var(--text-dim);text-align:center">No reputation data yet</td>';
+    tr.innerHTML = '<td colspan="7" class="empty-row">No reputation data yet</td>';
     tbody.appendChild(tr);
     return;
   }
-  data.forEach((r, i) => {
+
+  data.forEach((row, index) => {
+    const display = row.display_name || shortCid(row.node_id);
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td>${i + 1}</td>
-      <td style="cursor:pointer" onclick="window.__selectNode && window.__selectNode('${r.node_id}')">
-        <div style="color:var(--text)">${escHtml(r.display_name || '—')}</div>
-        <div style="color:var(--cyan);font-size:11px">${shortCid(r.node_id)}</div>
+      <td>${index + 1}</td>
+      <td style="cursor:pointer" onclick="window.__selectNode('${row.node_id}')">
+        ${renderNodeName({
+          node_id: row.node_id,
+          display_name: display,
+          avatar_url: row.avatar_url || '',
+        }, { avatarSize: 'xs' })}
+        <div style="margin-top:4px">${renderActivityBadge(row.activity)}</div>
       </td>
-      <td style="color:${r.score >= 0 ? 'var(--green)' : 'var(--red)'}">${r.score.toFixed(1)}</td>
-      <td>${r.experiments_published}</td>
-      <td>${r.experiments_verified}</td>
-      <td>${r.disputes_won}</td>
-      <td>${r.disputes_lost}</td>
+      <td style="color:${row.score >= 0 ? 'var(--green)' : 'var(--red)'}">${row.score.toFixed(1)}</td>
+      <td>${row.experiments_published}</td>
+      <td>${row.experiments_verified}</td>
+      <td>${row.disputes_won}</td>
+      <td>${row.disputes_lost}</td>
     `;
     tbody.appendChild(tr);
   });
 }
 
-// ===== DETAIL PANEL =====
-async function selectExperiment(cid) {
-  selectedNode = cid;
-  const r = await getExperiment(cid);
-  if (r.error) return;
-  const [rep, profile] = await Promise.all([
-    getNodeReputation(r.node_id),
-    getNodeProfile(r.node_id),
-  ]);
+function renderNodeSummaryCard(node) {
+  const identity = node.display_name || shortCid(node.node_id);
+  const website = safeUrl(node.website);
+  return `
+    <div class="profile-card">
+      <div class="profile-hero">
+        ${renderAvatar(node.avatar_url, identity, 'lg')}
+        <div class="profile-copy">
+          <div class="profile-title-row">
+            <h3>${escHtml(identity)}</h3>
+            ${renderActivityBadge(node.activity)}
+          </div>
+          <div class="muted-cid">${node.node_id}</div>
+          ${node.bio ? `<p class="profile-bio">${escHtml(node.bio)}</p>` : ''}
+          <div class="profile-links">
+            ${website ? `<a href="${website}" target="_blank" rel="noreferrer">website</a>` : ''}
+            ${node.donation_address ? `<span>donation ${escHtml(node.donation_address)}</span>` : ''}
+          </div>
+        </div>
+      </div>
+      <div class="stat-grid">
+        <div class="stat-card"><span class="label">Score</span><span class="value">${node.reputation.score.toFixed(1)}</span></div>
+        <div class="stat-card"><span class="label">Experiments</span><span class="value">${node.experiment_count}</span></div>
+        <div class="stat-card"><span class="label">Keep</span><span class="value">${node.keep_count}</span></div>
+        <div class="stat-card"><span class="label">Frontier</span><span class="value">${node.frontier_count}</span></div>
+        <div class="stat-card"><span class="label">Verified</span><span class="value">${node.verified_count}</span></div>
+        <div class="stat-card"><span class="label">Last seen</span><span class="value">${timeAgo(node.last_seen)}</span></div>
+      </div>
+    </div>
+  `;
+}
 
-  document.getElementById('detail-empty').style.display = 'none';
-  const content = document.getElementById('detail-content');
-  content.style.display = 'block';
+function renderExperimentCard(record) {
+  return `
+    <div class="record-card clickable" onclick="window.__select('${record.id}')">
+      <div class="record-card-top">
+        <div>
+          <span class="status-badge ${record.status}">${record.status}</span>
+          ${renderFlagPills(record)}
+        </div>
+        <div class="muted-cid">${shortCid(record.id)}</div>
+      </div>
+      <div class="record-card-body">
+        <div class="record-main-metric">${record.val_bpb.toFixed(6)}</div>
+        <div class="record-meta">${escHtml(record.gpu_model || '—')} · ${record.num_steps} steps · ${timeAgo(record.timestamp)}</div>
+        <div class="record-desc">${escHtml(record.description)}</div>
+      </div>
+    </div>
+  `;
+}
 
-  // Delta from parent
-  let deltaHtml = '';
-  if (r.parent) {
-    const parent = await getExperiment(r.parent);
-    if (!parent.error) {
-      const delta = r.val_bpb - parent.val_bpb;
-      const sign = delta <= 0 ? '' : '+';
-      const cls = delta <= 0 ? 'keep' : 'discard';
-      deltaHtml = ` <span class="value ${cls}" style="font-size:13px">(${sign}${delta.toFixed(6)})</span>`;
-    }
+function bindNodeDetailControls(nodeId) {
+  detailContent.querySelectorAll('[data-node-status]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      state.nodeDetailFilters.status = btn.dataset.nodeStatus;
+      selectNode(nodeId);
+    });
+  });
+
+  const verifiedToggle = detailContent.querySelector('#node-verified-toggle');
+  const frontierToggle = detailContent.querySelector('#node-frontier-toggle');
+  if (verifiedToggle) {
+    verifiedToggle.addEventListener('change', () => {
+      state.nodeDetailFilters.verified_only = verifiedToggle.checked;
+      selectNode(nodeId);
+    });
   }
-
-  // Diff
-  let diffHtml = '';
-  if (r.diff) {
-    diffHtml = r.diff.split('\n').map(line => {
-      if (line.startsWith('@@')) return `<span class="hunk">${escHtml(line)}</span>`;
-      if (line.startsWith('+')) return `<span class="add">${escHtml(line)}</span>`;
-      if (line.startsWith('-')) return `<span class="del">${escHtml(line)}</span>`;
-      return escHtml(line);
-    }).join('\n');
+  if (frontierToggle) {
+    frontierToggle.addEventListener('change', () => {
+      state.nodeDetailFilters.frontier_only = frontierToggle.checked;
+      selectNode(nodeId);
+    });
   }
+}
 
-  content.innerHTML = `
-    <div class="detail-section">
-      <div class="detail-field">
-        <label>CID <button class="copy-btn" onclick="navigator.clipboard.writeText('${r.id}')">copy</button></label>
-        <div class="value cid" style="font-size:10px;word-break:break-all">${r.id}</div>
-      </div>
-      <div class="detail-field">
-        <label>Status</label>
-        <span class="status-badge ${r.status}">${r.status}</span>
-      </div>
-      <div class="detail-field">
-        <label>val_bpb</label>
-        <div class="value bpb ${r.status}">${r.val_bpb.toFixed(6)}</div>${deltaHtml}
-      </div>
+async function selectNode(nodeId) {
+  state.selectedNodeId = nodeId;
+  state.selectedExperimentId = null;
+  state.detailMode = 'node';
+
+  const payload = await getNodeDetail(nodeId, state.nodeDetailFilters);
+  if (payload.error) return;
+
+  const node = payload.node;
+  setDetailHeader('Node', `${node.display_name || shortCid(node.node_id)} · ${shortCid(node.node_id)}`);
+
+  const best = node.best_experiment ? `
+    <div class="detail-field">
+      <label>Best experiment</label>
+      ${renderExperimentCard(node.best_experiment)}
     </div>
+  ` : '';
 
-    <div class="detail-section">
-      <div class="detail-field">
-        <label>Description</label>
-        <div class="value" style="line-height:1.4">${escHtml(r.description)}</div>
-      </div>
-      ${r.hypothesis && r.hypothesis !== '—' ? `<div class="detail-field"><label>Hypothesis</label><div class="value" style="line-height:1.4">${escHtml(r.hypothesis)}</div></div>` : ''}
+  const latest = node.latest_experiment ? `
+    <div class="detail-field">
+      <label>Latest experiment</label>
+      ${renderExperimentCard(node.latest_experiment)}
     </div>
+  ` : '';
 
-    <div class="detail-section">
-      <div class="detail-field">
-        <label>Parent</label>
-        <div class="value cid" onclick="window.__select('${r.parent || ''}')">${r.parent ? shortCid(r.parent) : 'genesis'}</div>
-      </div>
-      <div class="detail-field">
-        <label>Depth</label>
-        <div class="value">${r.depth}</div>
-      </div>
-      <div id="children-section"></div>
-    </div>
+  const experimentCards = payload.experiments.length ? payload.experiments.map(renderExperimentCard).join('') : `
+    <div class="empty-panel">No experiments match the current node filters.</div>
+  `;
 
-    ${r.diff ? `<div class="detail-section"><label style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.5px">Diff</label><div class="diff-block">${diffHtml}</div></div>` : ''}
-
-    <div id="code-section"></div>
-
+  showDetail(`
+    ${renderNodeSummaryCard(node)}
     <div class="detail-section">
       <div class="detail-field">
         <label>Hardware</label>
-        <div class="value">${escHtml(r.gpu_model || '—')}</div>
+        <div class="value">${escHtml((node.gpu_models || []).join(', ') || '—')}</div>
       </div>
       <div class="detail-field">
-        <label>VRAM</label>
-        <div class="value">${r.peak_vram_mb.toFixed(0)} MB</div>
+        <label>Agents</label>
+        <div class="value">${escHtml((node.agent_models || []).join(', ') || '—')}</div>
       </div>
       <div class="detail-field">
-        <label>Training</label>
-        <div class="value">${r.num_steps} steps · ${formatParam(r.num_params)} params · ${r.time_budget}s budget</div>
+        <label>Window</label>
+        <div class="value">${formatDateTime(node.first_seen)} to ${formatDateTime(node.last_seen)}</div>
       </div>
-      <div class="detail-field">
-        <label>Agent</label>
-        <div class="value">${escHtml(r.agent_model || '—')}</div>
-      </div>
-      <div class="detail-field">
-        <label>Node</label>
-        <div class="value" onclick="window.__selectNode && window.__selectNode('${r.node_id}')">
-          ${escHtml(profile.display_name || r.node_display_name || shortCid(r.node_id))}
-          <span class="cid" style="display:block;font-size:10px">${shortCid(r.node_id)}</span>
-        </div>
-      </div>
-      ${profile && !profile.error && (profile.bio || profile.website || profile.donation_address) ? `<div class="detail-field"><label>Profile</label><div class="value">${profile.bio ? escHtml(profile.bio) : ''}${profile.website ? `<div><a href="${escHtml(profile.website)}" target="_blank" rel="noreferrer">${escHtml(profile.website)}</a></div>` : ''}${profile.donation_address ? `<div style="font-size:11px;color:var(--text-dim)">Donation: ${escHtml(profile.donation_address)}</div>` : ''}</div></div>` : ''}
       <div class="detail-field">
         <label>Reputation</label>
-        <div class="value">${rep.score.toFixed(1)} · ${rep.experiments_published} published · ${rep.experiments_verified} verified</div>
+        <div class="value">${node.reputation.experiments_published} published · ${node.reputation.experiments_verified} verified · ${node.reputation.verifications_performed} checks</div>
       </div>
-      <div class="detail-field">
-        <label>Time</label>
-        <div class="value">${new Date(r.timestamp * 1000).toLocaleString()}</div>
-      </div>
+      ${best}
+      ${latest}
     </div>
-  `;
 
-  // Load children
-  loadChildren(cid);
+    <div class="detail-section">
+      <div class="section-row">
+        <label>Experiments (${payload.total_experiments})</label>
+        <div class="pill-group">
+          <button class="mini-filter ${state.nodeDetailFilters.status === 'all' ? 'active' : ''}" data-node-status="all">all</button>
+          <button class="mini-filter ${state.nodeDetailFilters.status === 'keep' ? 'active' : ''}" data-node-status="keep">keep</button>
+          <button class="mini-filter ${state.nodeDetailFilters.status === 'discard' ? 'active' : ''}" data-node-status="discard">discard</button>
+          <button class="mini-filter ${state.nodeDetailFilters.status === 'crash' ? 'active' : ''}" data-node-status="crash">crash</button>
+        </div>
+      </div>
+      <div class="toggle-row">
+        <label><input type="checkbox" id="node-verified-toggle" ${state.nodeDetailFilters.verified_only ? 'checked' : ''}> verified only</label>
+        <label><input type="checkbox" id="node-frontier-toggle" ${state.nodeDetailFilters.frontier_only ? 'checked' : ''}> frontier only</label>
+      </div>
+      <div class="record-list">${experimentCards}</div>
+    </div>
+  `);
 
-  // Load ancestor chain + highlight path
-  const ancestors = await getAncestor(cid);
-  const pathIds = ancestors.map(a => a.id);
-
-  if (ancestors.length > 1) {
-    let chainHtml = '<div class="ancestor-chain"><label style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;display:block">Lineage</label>';
-    ancestors.forEach((a, i) => {
-      const dotColor = statusColor(a.status);
-      const isCurrent = a.id === cid;
-      chainHtml += `
-        ${i > 0 ? '<div class="ancestor-item"><span class="line"></span></div>' : ''}
-        <div class="ancestor-item ${isCurrent ? 'current' : ''}" onclick="window.__select('${a.id}')">
-          <span class="dot" style="background:${dotColor}"></span>
-          <span style="color:var(--cyan)">${shortCid(a.id)}</span>
-          <span>${a.val_bpb.toFixed(6)}</span>
-          <span style="color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(a.description.slice(0, 40))}</span>
-        </div>`;
-    });
-    chainHtml += '</div>';
-    content.innerHTML += chainHtml;
-  }
-
-  // Load code artifact
-  loadCode(r.code_cid);
-
-  // Update DAG highlighting
-  updateSelection(selectedNode, pathIds);
+  bindNodeDetailControls(nodeId);
+  resetHighlight();
 }
 
-async function loadChildren(cid) {
-  const kids = await getChildren(cid);
-  const el = document.getElementById('children-section');
-  if (!el || kids.length === 0) return;
-  el.innerHTML = `
-    <div class="detail-field">
-      <label>Children (${kids.length})</label>
-      ${kids.map(k => `
-        <div style="display:flex;gap:6px;align-items:center;padding:2px 0;cursor:pointer" onclick="window.__select('${k.id}')">
-          <span class="status-badge ${k.status}" style="font-size:9px">${k.status}</span>
-          <span style="color:var(--cyan);font-size:11px">${shortCid(k.id)}</span>
-          <span style="font-size:11px">${k.val_bpb.toFixed(6)}</span>
-        </div>
-      `).join('')}
-    </div>
-  `;
+function buildDiffHtml(diff) {
+  if (!diff) return '';
+  return diff.split('\n').map(line => {
+    if (line.startsWith('@@')) return `<span class="hunk">${escHtml(line)}</span>`;
+    if (line.startsWith('+')) return `<span class="add">${escHtml(line)}</span>`;
+    if (line.startsWith('-')) return `<span class="del">${escHtml(line)}</span>`;
+    return escHtml(line);
+  }).join('\n');
 }
 
 async function loadCode(codeCid) {
@@ -329,9 +479,7 @@ async function loadCode(codeCid) {
   if (!el || !codeCid) return;
   el.innerHTML = `
     <div class="detail-section">
-      <label style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.5px;cursor:pointer" id="code-toggle">
-        Code Snapshot ▸
-      </label>
+      <label class="detail-section-title" id="code-toggle">Code Snapshot ▸</label>
       <div id="code-content" style="display:none"></div>
     </div>
   `;
@@ -340,11 +488,9 @@ async function loadCode(codeCid) {
     if (contentEl.style.display === 'none') {
       document.getElementById('code-toggle').textContent = 'Code Snapshot ▾';
       const artifact = await getArtifact(codeCid);
-      if (artifact.error) {
-        contentEl.innerHTML = '<div style="color:var(--text-dim);padding:8px">Artifact not available</div>';
-      } else {
-        contentEl.innerHTML = `<div class="code-block">${escHtml(artifact.content)}</div>`;
-      }
+      contentEl.innerHTML = artifact.error
+        ? '<div class="empty-panel">Artifact not available</div>'
+        : `<div class="code-block">${escHtml(artifact.content)}</div>`;
       contentEl.style.display = 'block';
     } else {
       contentEl.style.display = 'none';
@@ -353,15 +499,152 @@ async function loadCode(codeCid) {
   });
 }
 
-// Global handlers for inline onclick
-window.__select = (cid) => { if (cid) selectExperiment(cid); };
-window.__selectNode = async (nodeId) => {
-  searchInput.value = nodeId.slice(0, 8);
-  const results = await searchExperiment(nodeId.slice(0, 8));
-  renderSearchResult(results);
-};
+async function selectExperiment(cid) {
+  state.selectedExperimentId = cid;
+  state.selectedNodeId = null;
+  state.detailMode = 'experiment';
 
-// ===== ACTIVITY FEED =====
+  const record = await getExperiment(cid);
+  if (record.error) return;
+
+  const [ancestors, children, nodePayload] = await Promise.all([
+    getAncestor(cid),
+    getChildren(cid),
+    getNodeDetail(record.node_id),
+  ]);
+
+  let deltaHtml = '';
+  if (record.parent) {
+    const parent = await getExperiment(record.parent);
+    if (!parent.error) {
+      const delta = record.val_bpb - parent.val_bpb;
+      const sign = delta <= 0 ? '' : '+';
+      const cls = delta <= 0 ? 'keep' : 'discard';
+      deltaHtml = `<span class="value ${cls}" style="font-size:13px">(${sign}${delta.toFixed(6)})</span>`;
+    }
+  }
+
+  const node = nodePayload.node || {
+    node_id: record.node_id,
+    display_name: record.node_display_name || '',
+    avatar_url: record.node_avatar_url || '',
+    bio: '',
+    website: '',
+    donation_address: '',
+    activity: 'observer',
+    reputation: { score: 0, experiments_published: 0, experiments_verified: 0, verifications_performed: 0 },
+    experiment_count: 0,
+    keep_count: 0,
+    frontier_count: 0,
+  };
+
+  const lineageHtml = ancestors.length > 1 ? `
+    <div class="ancestor-chain">
+      <label>Lineage</label>
+      ${ancestors.map((ancestor, index) => `
+        ${index > 0 ? '<div class="ancestor-item"><span class="line"></span></div>' : ''}
+        <div class="ancestor-item ${ancestor.id === cid ? 'current' : ''}" onclick="window.__select('${ancestor.id}')">
+          <span class="dot" style="background:${statusColor(ancestor.status)}"></span>
+          <span style="color:var(--cyan)">${shortCid(ancestor.id)}</span>
+          <span>${ancestor.val_bpb.toFixed(6)}</span>
+          <span class="ancestor-desc">${escHtml(ancestor.description.slice(0, 44))}</span>
+        </div>
+      `).join('')}
+    </div>
+  ` : '';
+
+  const childrenHtml = children.length ? `
+    <div class="detail-field">
+      <label>Children (${children.length})</label>
+      <div class="record-list compact-list">${children.map(renderExperimentCard).join('')}</div>
+    </div>
+  ` : '';
+
+  const website = safeUrl(node.website);
+  setDetailHeader('Experiment', `${record.description.slice(0, 48) || shortCid(record.id)}`);
+  showDetail(`
+    <div class="detail-section">
+      <div class="hero-stat-row">
+        <div class="detail-field">
+          <label>CID <button class="copy-btn" onclick="navigator.clipboard.writeText('${record.id}')">copy</button></label>
+          <div class="value cid" style="font-size:10px;word-break:break-all">${record.id}</div>
+        </div>
+        <div class="detail-field">
+          <label>Status</label>
+          <div>${renderFlagPills(record)} <span class="status-badge ${record.status}">${record.status}</span></div>
+        </div>
+        <div class="detail-field">
+          <label>val_bpb</label>
+          <div class="value bpb ${record.status}">${record.val_bpb.toFixed(6)}</div>
+          ${deltaHtml}
+        </div>
+      </div>
+    </div>
+
+    <div class="profile-card compact">
+      <div class="profile-hero">
+        ${renderAvatar(node.avatar_url, node.display_name || node.node_id, 'md')}
+        <div class="profile-copy">
+          <div class="profile-title-row">
+            <h3>${escHtml(node.display_name || shortCid(node.node_id))}</h3>
+            ${renderActivityBadge(node.activity)}
+          </div>
+          <div class="muted-cid" onclick="window.__selectNode('${node.node_id}')">${node.node_id}</div>
+          ${node.bio ? `<p class="profile-bio">${escHtml(node.bio)}</p>` : ''}
+          <div class="profile-links">
+            ${website ? `<a href="${website}" target="_blank" rel="noreferrer">website</a>` : ''}
+            ${node.donation_address ? `<span>donation ${escHtml(node.donation_address)}</span>` : ''}
+          </div>
+          <div class="profile-links">
+            <button class="inline-link" onclick="window.__selectNode('${node.node_id}')">open node</button>
+            <span>${node.reputation.score.toFixed(1)} score</span>
+            <span>${node.experiment_count} experiments</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="detail-section">
+      <div class="detail-field">
+        <label>Description</label>
+        <div class="value">${escHtml(record.description)}</div>
+      </div>
+      ${record.hypothesis && record.hypothesis !== '—' ? `<div class="detail-field"><label>Hypothesis</label><div class="value">${escHtml(record.hypothesis)}</div></div>` : ''}
+    </div>
+
+    <div class="detail-section">
+      <div class="detail-field">
+        <label>Parent</label>
+        <div class="value cid" onclick="window.__select('${record.parent || ''}')">${record.parent ? shortCid(record.parent) : 'genesis'}</div>
+      </div>
+      <div class="detail-field">
+        <label>Hardware</label>
+        <div class="value">${escHtml(record.gpu_model || '—')} · ${record.peak_vram_mb.toFixed(0)} MB</div>
+      </div>
+      <div class="detail-field">
+        <label>Training</label>
+        <div class="value">${record.num_steps} steps · ${formatParam(record.num_params)} params · ${record.time_budget}s budget</div>
+      </div>
+      <div class="detail-field">
+        <label>Agent</label>
+        <div class="value">${escHtml(record.agent_model || '—')}</div>
+      </div>
+      <div class="detail-field">
+        <label>Time</label>
+        <div class="value">${formatDateTime(record.timestamp)}</div>
+      </div>
+      ${childrenHtml}
+    </div>
+
+    ${record.diff ? `<div class="detail-section"><label>Diff</label><div class="diff-block">${buildDiffHtml(record.diff)}</div></div>` : ''}
+    <div id="code-section"></div>
+    ${lineageHtml}
+  `);
+
+  loadCode(record.code_cid);
+  updateSelection(cid, ancestors.map(item => item.id));
+}
+
 function addActivity(record) {
   const feed = document.getElementById('activity-feed');
   const item = document.createElement('div');
@@ -371,16 +654,17 @@ function addActivity(record) {
     <span class="status-badge ${record.status}">${record.status}</span>
     <span class="cid-link" onclick="window.__select('${record.id}')">${shortCid(record.id)}</span>
     <span>${record.val_bpb.toFixed(6)}</span>
-    <span class="desc">${escHtml(record.description.slice(0, 60))}</span>
+    <span class="desc">${escHtml(record.description.slice(0, 72))}</span>
   `;
   feed.prepend(item);
-  while (feed.children.length > 100) feed.removeChild(feed.lastChild);
+  while (feed.children.length > 120) {
+    feed.removeChild(feed.lastChild);
+  }
 }
 
-// ===== WEBSOCKET =====
 function connectWs() {
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const ws = new WebSocket(`${proto}//${location.host}/ws`);
+  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const ws = new WebSocket(`${proto}//${window.location.host}/ws`);
 
   ws.onopen = () => {
     document.getElementById('ws-dot').classList.add('connected');
@@ -391,69 +675,130 @@ function connectWs() {
     setTimeout(connectWs, 2000);
   };
 
-  ws.onmessage = (e) => {
-    const msg = JSON.parse(e.data);
-    if (msg.event === 'experiment') {
-      const record = msg.data;
-      const existing = graphData.node.find(n => n.id === record.id);
-      if (!existing) {
-        graphData.node.push(record);
-        if (record.parent) {
-          graphData.edge.push({ source: record.parent, target: record.id });
-        }
+  ws.onmessage = async event => {
+    const msg = JSON.parse(event.data);
+    if (msg.event !== 'experiment') return;
+
+    const record = msg.data;
+    const existing = state.graphData.node.find(node => node.id === record.id);
+    if (!existing) {
+      state.graphData.node.push(record);
+      if (record.parent) {
+        state.graphData.edge.push({ source: record.parent, target: record.id });
       }
-
-      getFrontier().then(frontier => {
-        graphData.frontier_id = frontier.map(f => f.id);
-        renderDag(getFilteredGraph(), selectedNode);
-      });
-
       addActivity(record);
-      refreshStat();
-      refreshFrontier();
+    }
+
+    const frontier = await getFrontier();
+    state.graphData.frontier_id = frontier.map(item => item.id);
+    renderDag(getFilteredGraph(), state.selectedExperimentId);
+
+    await Promise.all([refreshStat(), refreshFrontier(), refreshLeaderboard()]);
+    if (document.getElementById('nodes-tab').classList.contains('active') || state.detailMode === 'node') {
+      await refreshNodes();
+    }
+    if (state.detailMode === 'node' && state.selectedNodeId === record.node_id) {
+      await selectNode(state.selectedNodeId);
     }
   };
 }
 
-// ===== KEYBOARD SHORTCUTS =====
-document.addEventListener('keydown', (e) => {
-  if (e.key === '/' && !e.ctrlKey && !e.metaKey && document.activeElement !== searchInput) {
-    e.preventDefault();
-    searchInput.focus();
-  }
-  if (e.key === 'Escape' && selectedNode) {
-    selectedNode = null;
-    resetHighlight();
-    document.getElementById('detail-empty').style.display = 'block';
-    document.getElementById('detail-content').style.display = 'none';
-  }
-});
+function bindEvents() {
+  document.querySelectorAll('.tab-bar button').forEach(btn => {
+    btn.addEventListener('click', () => activateTab(btn.dataset.tab));
+  });
 
-// ===== INIT =====
+  searchInput.addEventListener('input', () => {
+    clearTimeout(state.searchTimeout);
+    const query = searchInput.value.trim();
+    if (query.length < 2) {
+      searchResult.classList.remove('open');
+      return;
+    }
+    state.searchTimeout = setTimeout(async () => {
+      const [experiments, nodes] = await Promise.all([
+        searchExperiment(query),
+        searchNodes(query),
+      ]);
+      renderSearchResult(experiments, nodes);
+    }, 180);
+  });
+
+  searchInput.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      searchResult.classList.remove('open');
+      searchInput.blur();
+    }
+  });
+
+  document.addEventListener('click', e => {
+    if (!e.target.closest('.search-wrap')) {
+      searchResult.classList.remove('open');
+    }
+  });
+
+  document.querySelectorAll('.filter-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.filter-btn').forEach(other => other.classList.remove('active'));
+      btn.classList.add('active');
+      state.statusFilter = btn.dataset.filter;
+      renderDag(getFilteredGraph(), state.selectedExperimentId);
+    });
+  });
+
+  Object.entries(nodeFilterEls).forEach(([key, el]) => {
+    el.addEventListener('change', () => {
+      state.nodeFilters[key] = el.value;
+      refreshNodes();
+    });
+  });
+
+  document.addEventListener('keydown', e => {
+    if (e.key === '/' && !e.ctrlKey && !e.metaKey && document.activeElement !== searchInput) {
+      e.preventDefault();
+      searchInput.focus();
+    }
+    if (e.key === 'Escape' && state.detailMode !== 'empty') {
+      clearDetail();
+      renderDag(getFilteredGraph(), null);
+    }
+  });
+}
+
+window.__select = cid => {
+  if (cid) selectExperiment(cid);
+};
+
+window.__selectNode = nodeId => {
+  if (nodeId) selectNode(nodeId);
+};
+
 async function init() {
-  const dagPanel = document.getElementById('dag-panel');
-  initDag(dagPanel, selectExperiment);
+  bindEvents();
+  initDag(document.getElementById('dag-panel'), selectExperiment);
 
-  const [graphResp] = await Promise.all([
+  const [graphData] = await Promise.all([
     getGraph(),
     refreshStat(),
     refreshFrontier(),
+    refreshNodes(),
     refreshLeaderboard(),
   ]);
 
-  graphData = graphResp;
-
-  graphData.node
+  state.graphData = graphData;
+  state.graphData.node
+    .slice()
     .sort((a, b) => b.timestamp - a.timestamp)
     .slice(0, 50)
     .forEach(addActivity);
 
-  renderDag(graphData, null);
+  renderDag(getFilteredGraph(), null);
   connectWs();
 
-  setInterval(() => {
+  window.setInterval(() => {
     refreshStat();
     refreshFrontier();
+    refreshNodes();
     refreshLeaderboard();
   }, 10000);
 }

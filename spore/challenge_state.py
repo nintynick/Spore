@@ -61,16 +61,29 @@ def apply_dispute_event(node, verifier: Verifier, payload: dict):
 
     outcome = payload.get("outcome", "")
     if outcome == DisputeOutcome.UPHELD.value:
+        record = node.graph.get(experiment_id)
+        if record is not None and not node.graph.is_verified(experiment_id):
+            verifier.reputation.record_verified(
+                payload.get("original_node_id", record.node_id),
+                record,
+                is_frontier=record.id in {r.id for r in node.graph.frontier()},
+            )
         node.graph.mark_verified(experiment_id, True)
-        verifier.reputation.dispute_resolved(
-            winner_id=payload.get("original_node_id", ""),
-            loser_id=payload.get("challenger_id", ""),
-        )
+        challenger_id = payload.get("challenger_id", "")
+        if challenger_id:
+            verifier.reputation.penalize_wrong_dispute_side(challenger_id)
     elif outcome == DisputeOutcome.REJECTED.value:
-        verifier.reputation.dispute_resolved(
-            winner_id=payload.get("challenger_id", ""),
-            loser_id=payload.get("original_node_id", ""),
-        )
+        challenger_id = payload.get("challenger_id", "")
+        original_node_id = payload.get("original_node_id", "")
+        if challenger_id:
+            verifier.reputation.reward_successful_challenge(challenger_id)
+        if original_node_id:
+            verifier.reputation.penalize_rejected_experiment(original_node_id)
+
+    for verifier_id in payload.get("winner_verifier_ids", []):
+        verifier.reputation.reward_winning_verifier(verifier_id)
+    for verifier_id in payload.get("loser_verifier_ids", []):
+        verifier.reputation.penalize_wrong_dispute_side(verifier_id)
     return True
 
 

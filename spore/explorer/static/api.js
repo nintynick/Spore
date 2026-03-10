@@ -5,6 +5,16 @@ export async function fetchJson(url) {
   return res.json();
 }
 
+function buildQuery(params = {}) {
+  const search = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === '' || value === 'all') return;
+    search.set(key, String(value));
+  });
+  const query = search.toString();
+  return query ? `?${query}` : '';
+}
+
 export async function getStat() {
   return fetchJson('/api/stat');
 }
@@ -34,8 +44,21 @@ export async function getRecent(limit = 50) {
   return fetchJson(`/api/recent?limit=${limit}`);
 }
 
-export async function getNodeExperiment(nodeId) {
-  return fetchJson(`/api/node/${nodeId}/experiment`);
+export async function getNodes(params = {}) {
+  return fetchJson(`/api/nodes${buildQuery(params)}`);
+}
+
+export async function searchNodes(query, params = {}) {
+  if (!query || query.length < 2) return [];
+  return fetchJson(`/api/nodes/search${buildQuery({ q: query, ...params })}`);
+}
+
+export async function getNodeDetail(nodeId, params = {}) {
+  return fetchJson(`/api/node/${nodeId}${buildQuery(params)}`);
+}
+
+export async function getNodeExperiment(nodeId, params = {}) {
+  return fetchJson(`/api/node/${nodeId}/experiment${buildQuery(params)}`);
 }
 
 export async function getNodeReputation(nodeId) {
@@ -75,11 +98,17 @@ export function statusColor(s) {
 }
 
 export function timeAgo(ts) {
+  if (!ts) return '—';
   const sec = Math.floor(Date.now() / 1000 - ts);
   if (sec < 60) return sec + 's';
   if (sec < 3600) return Math.floor(sec / 60) + 'm';
   if (sec < 86400) return Math.floor(sec / 3600) + 'h';
   return Math.floor(sec / 86400) + 'd';
+}
+
+export function formatDateTime(ts) {
+  if (!ts) return '—';
+  return new Date(ts * 1000).toLocaleString();
 }
 
 export function escHtml(s) {

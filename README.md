@@ -11,7 +11,7 @@ Spore is based on Karpathy's [autoresearch](https://github.com/karpathy/autorese
 The current repo includes:
 
 - Signed experiment records and a local SQLite DAG
-- TCP gossip with dedup, sync, peer exchange, and code artifact transfer
+- TCP gossip with dedup, sync, peer exchange, code artifact transfer, and signed control-event replay
 - Frontier-aware autonomous experiment loop
 - Probabilistic spot-checking, challenges, disputes, and propagated reputation updates
 - Artifact prefetch and shared code-fetch coordination
@@ -182,17 +182,21 @@ Current behavior:
 - successful spot-checks propagate as network-wide verification events
 - incompatible GPU classes do not compare val_bpb directly
 - challenge responses and dispute outcomes propagate across the mesh
+- challenge, verification, and dispute messages are signed by the acting node
+- signed control events are stored locally and replayed on peer sync
 - reputation updates are idempotent and event-based
 
 Current reputation effects:
 
 - verified `keep`: `+1.0`
 - verified frontier `keep`: `+2.0`
-- verified `discard`: `+0.3`
-- verified `crash`: `+0.1`
-- verification performed: `+0.5`
-- dispute won: `+1.0`
-- dispute lost: `-5.0`
+- verified `discard`: `+0.0`
+- verified `crash`: `+0.0`
+- routine verification performed: `+0.0`
+- successful challenge against a bad claim: `+1.0`
+- verifier on the winning side of a resolved dispute: `+0.5`
+- wrong side of a resolved dispute: `-1.0`
+- rejected publisher in a resolved dispute: `-5.0`
 
 Important protocol realities:
 
@@ -200,6 +204,7 @@ Important protocol realities:
 - a challenge uses up to 3 independent same-class verifiers, but only as many as the graph topology actually provides
 - the default challenge timeout is 30 minutes (`SPORE_CHALLENGE_TIMEOUT`)
 - one isolated hardware class cannot self-verify
+- nodes do not need to be online all the time; signed experiments and signed control events replay after reconnect
 
 ## Explorer
 
@@ -237,6 +242,7 @@ Layout:
 ├── config.toml            # Node configuration
 ├── db/
 │   ├── graph.sqlite       # Experiment DAG
+│   ├── control.sqlite     # Signed challenge / verification / dispute replay
 │   ├── profile.sqlite     # Signed node profiles
 │   └── reputation.sqlite  # Reputation + processed event ids
 ├── identity/

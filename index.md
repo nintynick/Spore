@@ -20,9 +20,9 @@ This is distributed research, not distributed training.
 ## Current Surface Area
 
 - Experiment DAG in SQLite
-- TCP gossip with PEX, sync, and artifact transfer
+- TCP gossip with PEX, experiment sync, signed control-event replay, and artifact transfer
 - Frontier-aware autonomous experiment loop
-- Spot-check, challenge, dispute, and propagated reputation events
+- Signed spot-check, challenge, dispute, and propagated reputation events
 - Signed node profiles for display names and donation metadata
 - Explorer UI with graph, activity, frontier, and leaderboard
 - Research, sync-only, and verifier-only node modes

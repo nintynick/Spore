@@ -25,6 +25,7 @@
 <div class="filter-bar">
   <div class="stats">
     <div>experiments <span class="val" id="stat-total">0</span></div>
+    <div>nodes <span class="val" id="stat-nodes">0</span></div>
     <div>frontier <span class="val" id="stat-frontier">0</span></div>
     <div>best <span class="val" id="stat-best">—</span></div>
     <div>peer <span class="val" id="stat-peer">0</span></div>
@@ -44,10 +45,11 @@
   </div>
   <div class="detail-panel" id="detail-panel">
     <div class="detail-header">
-      <h2>Experiment</h2>
+      <h2 id="detail-title">Detail</h2>
+      <div class="detail-subtitle" id="detail-subtitle">Choose an experiment or node</div>
     </div>
     <div class="detail-body">
-      <div class="detail-empty" id="detail-empty">Click a node or press <b>/</b> to search</div>
+      <div class="detail-empty" id="detail-empty">Click an experiment, open a node, or press <b>/</b> to search</div>
       <div id="detail-content" style="display:none"></div>
     </div>
   </div>
@@ -55,6 +57,7 @@
 
 <div class="tab-bar">
   <button class="active" data-tab="frontier-tab">Frontier</button>
+  <button data-tab="nodes-tab">Nodes</button>
   <button data-tab="activity-tab">Activity</button>
   <button data-tab="leaderboard-tab">Leaderboard</button>
 </div>
@@ -64,6 +67,54 @@
     <thead><tr>
       <th>CID</th><th>val_bpb</th><th>depth</th><th>GPU</th>
       <th>steps</th><th>params</th><th>description</th>
+    </tr></thead>
+    <tbody></tbody>
+  </table>
+</div>
+
+<div id="nodes-tab" class="tab-content">
+  <div class="tab-toolbar">
+    <label>
+      Activity
+      <select id="node-activity-filter">
+        <option value="all">all</option>
+        <option value="researcher">researchers</option>
+        <option value="hybrid">hybrid</option>
+        <option value="verifier">verifiers</option>
+        <option value="observer">observers</option>
+      </select>
+    </label>
+    <label>
+      Status
+      <select id="node-status-filter">
+        <option value="all">all</option>
+        <option value="keep">keep</option>
+        <option value="discard">discard</option>
+        <option value="crash">crash</option>
+      </select>
+    </label>
+    <label>
+      Profile
+      <select id="node-profile-filter">
+        <option value="all">all</option>
+        <option value="true">with profile</option>
+        <option value="false">no profile</option>
+      </select>
+    </label>
+    <label>
+      Sort
+      <select id="node-sort-filter">
+        <option value="recent">recent</option>
+        <option value="published">published</option>
+        <option value="score">score</option>
+        <option value="frontier">frontier</option>
+      </select>
+    </label>
+  </div>
+  <table id="node-table">
+    <thead><tr>
+      <th>Node</th><th>Role</th><th>Score</th><th>Experiments</th>
+      <th>Keep</th><th>Frontier</th><th>GPU</th><th>Last Seen</th>
     </tr></thead>
     <tbody></tbody>
   </table>

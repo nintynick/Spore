@@ -21,6 +21,8 @@ from nacl.signing import SigningKey
 
 from .artifact_sync import ArtifactSync
 from .challenge import ChallengeCoordinator
+from .control import SignedControlEvent
+from .control_store import ControlStore
 from .gossip import GossipServer
 from .gpu import normalize_gpu_model
 from .graph import ResearchGraph
@@ -91,6 +93,7 @@ class SporeNode:
         self.graph = ResearchGraph(self.data_dir / "db" / "graph.sqlite")
         self.store = ArtifactStore(self.data_dir / "artifact")
         self.profile = NodeProfileStore(self.data_dir / "db" / "profile.sqlite")
+        self.control = ControlStore(self.data_dir / "db" / "control.sqlite")
         self.reputation = ReputationStore(self.data_dir / "db" / "reputation.sqlite")
         self.reputation.backfill_published(self.graph.all_records())
         self.training = TrainingRuntime()
@@ -110,7 +113,9 @@ class SporeNode:
             port=self.config.port,
             on_experiment=self._on_remote_experiment,
             on_sync_request=self._on_sync_request,
+            on_control_sync_request=self._on_control_sync_request,
             on_new_peer=self._save_peer,
+            on_control_event=self._on_remote_control_event,
             on_challenge=self.challenger.on_challenge,
             on_challenge_response=self.challenger.on_challenge_response,
             on_dispute=self.challenger.on_dispute,
@@ -187,6 +192,16 @@ class SporeNode:
         all_records = self.graph.all_records()
         return [r for r in all_records if r.timestamp >= since_timestamp]
 
+    def _on_control_sync_request(
+        self, since_timestamp: int
+    ) -> list[SignedControlEvent]:
+        """Called when a peer requests signed control-event replay."""
+        return self.control.list_since(since_timestamp)
+
+    def _on_remote_control_event(self, event: SignedControlEvent):
+        """Persist a remote signed control event for replay on future sync."""
+        self.control.store(event)
+
     def _on_remote_profile(self, profile: NodeProfile):
         """Called when a remote profile arrives via gossip."""
         inserted = self.profile.upsert(profile)
@@ -257,6 +272,17 @@ class SporeNode:
             profile.display_name or "unnamed",
         )
 
+    def make_control_event(self, msg_type: str, payload: dict) -> dict:
+        """Create and sign a control-plane event payload."""
+        event = SignedControlEvent(
+            type=msg_type,
+            payload=dict(payload),
+            node_id=self.node_id,
+        )
+        event.sign(self.signing_key)
+        self.control.store(event)
+        return event.to_dict()
+
     def _on_code_request(self, code_cid: str) -> bytes | None:
         """Called when a peer requests code by CID."""
         return self.store.get(code_cid)
@@ -291,6 +317,9 @@ class SporeNode:
                     self._save_peer(peer_addr)
                     await self.gossip.request_pex(peer_addr)
                     await self.gossip.request_sync(peer_addr)
+                    await self.gossip.request_control_sync(
+                        peer_addr, since_timestamp=self.control.latest_timestamp()
+                    )
         if self.profile.get(self.node_id) is not None:
             await self.publish_profile()
 
@@ -298,6 +327,7 @@ class SporeNode:
         await self.gossip.stop()
         self.graph.close()
         self.profile.close()
+        self.control.close()
         self.reputation.close()
 
     def _load_known_peer(self) -> list[str]:

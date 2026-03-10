@@ -12,6 +12,7 @@ import json
 import logging
 from collections.abc import Callable
 
+from .control import SignedControlEvent
 from .profile import NodeProfile
 from .record import ExperimentRecord
 from .wire import MessageType, encode_message, read_message
@@ -28,7 +29,10 @@ class GossipServer:
         port: int = 7470,
         on_experiment: Callable[[ExperimentRecord], None] | None = None,
         on_sync_request: Callable[[int], list[ExperimentRecord]] | None = None,
+        on_control_sync_request: Callable[[int], list[SignedControlEvent]]
+        | None = None,
         on_new_peer: Callable[[str], None] | None = None,
+        on_control_event: Callable[[SignedControlEvent], None] | None = None,
         on_challenge: Callable[[dict], None] | None = None,
         on_challenge_response: Callable[[dict], None] | None = None,
         on_dispute: Callable[[dict], None] | None = None,
@@ -40,7 +44,9 @@ class GossipServer:
         self.port = port
         self.on_experiment = on_experiment
         self.on_sync_request = on_sync_request
+        self.on_control_sync_request = on_control_sync_request
         self.on_new_peer = on_new_peer
+        self.on_control_event = on_control_event
         self.on_challenge = on_challenge
         self.on_challenge_response = on_challenge_response
         self.on_dispute = on_dispute
@@ -173,6 +179,18 @@ class GossipServer:
         writer.write(msg)
         await writer.drain()
 
+    async def request_control_sync(self, addr: str, since_timestamp: int = 0):
+        """Request all signed control events from a peer since a given timestamp."""
+        if addr not in self.peers:
+            return
+        _, writer = self.peers[addr]
+        msg = encode_message(
+            MessageType.CONTROL_SYNC_REQUEST,
+            {"since": since_timestamp},
+        )
+        writer.write(msg)
+        await writer.drain()
+
     async def request_code(
         self, addr: str, code_cid: str, timeout: float = 30.0
     ) -> bytes | None:
@@ -256,6 +274,19 @@ class GossipServer:
                     await writer.drain()
                 log.info("Sync response: sent %d records to %s", len(records), addr)
 
+        elif msg_type == MessageType.CONTROL_SYNC_REQUEST:
+            since = payload.get("since", 0)
+            if self.on_control_sync_request and addr in self.peers:
+                events = self.on_control_sync_request(since)
+                _, writer = self.peers[addr]
+                for event in events:
+                    control_msg = encode_message(event.type, event.to_dict())
+                    writer.write(control_msg)
+                    await writer.drain()
+                log.info(
+                    "Control sync response: sent %d events to %s", len(events), addr
+                )
+
         elif msg_type == MessageType.PEX_REQUEST:
             peer_list = [a for a in self.peers if a != addr]
             if addr in self.peers:
@@ -277,32 +308,44 @@ class GossipServer:
             log.info("PEX: received %d peers from %s", len(new_peer), addr)
 
         elif msg_type == MessageType.CHALLENGE:
-            if not self._mark_seen_event(msg_type, payload):
+            event = self._parse_control_event(addr, msg_type, payload)
+            if event is None or not self._mark_seen_event(msg_type, event.payload):
                 return
+            if self.on_control_event:
+                self.on_control_event(event)
             if self.on_challenge:
-                self.on_challenge(payload)
-            await self._regossip_control(msg_type, payload, exclude=addr)
+                self.on_challenge(event.payload)
+            await self._regossip_control(msg_type, event.to_dict(), exclude=addr)
 
         elif msg_type == MessageType.CHALLENGE_RESPONSE:
-            if not self._mark_seen_event(msg_type, payload):
+            event = self._parse_control_event(addr, msg_type, payload)
+            if event is None or not self._mark_seen_event(msg_type, event.payload):
                 return
+            if self.on_control_event:
+                self.on_control_event(event)
             if self.on_challenge_response:
-                self.on_challenge_response(payload)
-            await self._regossip_control(msg_type, payload, exclude=addr)
+                self.on_challenge_response(event.payload)
+            await self._regossip_control(msg_type, event.to_dict(), exclude=addr)
 
         elif msg_type == MessageType.DISPUTE:
-            if not self._mark_seen_event(msg_type, payload):
+            event = self._parse_control_event(addr, msg_type, payload)
+            if event is None or not self._mark_seen_event(msg_type, event.payload):
                 return
+            if self.on_control_event:
+                self.on_control_event(event)
             if self.on_dispute:
-                self.on_dispute(payload)
-            await self._regossip_control(msg_type, payload, exclude=addr)
+                self.on_dispute(event.payload)
+            await self._regossip_control(msg_type, event.to_dict(), exclude=addr)
 
         elif msg_type == MessageType.VERIFICATION:
-            if not self._mark_seen_event(msg_type, payload):
+            event = self._parse_control_event(addr, msg_type, payload)
+            if event is None or not self._mark_seen_event(msg_type, event.payload):
                 return
+            if self.on_control_event:
+                self.on_control_event(event)
             if self.on_verification:
-                self.on_verification(payload)
-            await self._regossip_control(msg_type, payload, exclude=addr)
+                self.on_verification(event.payload)
+            await self._regossip_control(msg_type, event.to_dict(), exclude=addr)
 
         elif msg_type == MessageType.PROFILE:
             if not self._mark_seen_event(msg_type, payload):
@@ -392,6 +435,46 @@ class GossipServer:
             return False
         self.seen_event.add(key)
         return True
+
+    def _parse_control_event(
+        self, addr: str, msg_type: str, payload: dict
+    ) -> SignedControlEvent | None:
+        """Parse and verify a signed control event."""
+        try:
+            event = SignedControlEvent.from_json(payload)
+        except Exception:
+            log.warning("Invalid %s payload from %s, dropping", msg_type, addr)
+            return None
+
+        if event.type != msg_type:
+            log.warning("Mismatched control event type from %s, dropping", addr)
+            return None
+        if not event.verify_id():
+            log.warning("Invalid %s id from %s, dropping", msg_type, addr)
+            return None
+        if not event.verify_signature():
+            log.warning("Invalid %s signature from %s, dropping", msg_type, addr)
+            return None
+        if not self._control_actor_matches_signer(msg_type, event):
+            log.warning(
+                "Actor/signature mismatch for %s from %s, dropping", msg_type, addr
+            )
+            return None
+        return event
+
+    def _control_actor_matches_signer(
+        self, msg_type: str, event: SignedControlEvent
+    ) -> bool:
+        """Require the signer to match the actor identity for control events."""
+        actor_field = {
+            MessageType.CHALLENGE: "challenger_id",
+            MessageType.CHALLENGE_RESPONSE: "verifier_id",
+            MessageType.DISPUTE: "challenger_id",
+            MessageType.VERIFICATION: "verifier_id",
+        }.get(msg_type)
+        if actor_field is None:
+            return True
+        return event.payload.get(actor_field, "") == event.node_id
 
     def _remove_peer(self, addr: str):
         if addr in self.peers:

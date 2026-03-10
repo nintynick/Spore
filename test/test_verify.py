@@ -51,16 +51,24 @@ class TestReputationStore:
         _, node_id = keypair
         record = make_record(keypair, status=Status.DISCARD)
         reputation.record_verified(node_id, record)
-        assert reputation.get_score(node_id) == 0.3
+        assert reputation.get_score(node_id) == 0.0
+        assert reputation.get_stats(node_id)["experiments_verified"] == 1
 
     def test_verification_performed(self, reputation):
         reputation.verification_performed("verifier_1")
-        assert reputation.get_score("verifier_1") == 0.5
+        assert reputation.get_score("verifier_1") == 0.0
+        assert reputation.get_stats("verifier_1")["verifications_performed"] == 1
 
-    def test_dispute_resolved(self, reputation):
-        reputation.dispute_resolved("winner", "loser")
-        assert reputation.get_score("winner") == 1.0
-        assert reputation.get_score("loser") == -5.0
+    def test_dispute_reward_helpers(self, reputation):
+        reputation.reward_successful_challenge("challenger")
+        reputation.reward_winning_verifier("verifier")
+        reputation.penalize_wrong_dispute_side("wrong")
+        reputation.penalize_rejected_experiment("liar")
+
+        assert reputation.get_score("challenger") == 1.0
+        assert reputation.get_score("verifier") == 0.5
+        assert reputation.get_score("wrong") == -1.0
+        assert reputation.get_score("liar") == -5.0
 
     def test_leaderboard(self, reputation):
         reputation.update_score("alice", 10.0)
@@ -82,7 +90,7 @@ class TestReputationStore:
         assert stats["experiments_published"] == 1
         assert stats["experiments_verified"] == 1
         assert stats["verifications_performed"] == 1
-        assert stats["score"] == 1.5  # 1.0 (verified keep) + 0.5 (verification)
+        assert stats["score"] == 1.0
 
     def test_backfill_published(self, reputation, keypair, second_keypair):
         _, node_id = keypair

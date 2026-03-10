@@ -13,7 +13,7 @@ Nodes:
 - exchange those records over gossip
 - fetch exact code artifacts by content hash
 - rerun compatible experiments to verify claims
-- track node reputation through propagated events
+- track node reputation through signed, replayable control events
 
 Spore distributes research, not distributed training. The atomic unit is a short experiment that can be rerun.
 
@@ -234,12 +234,13 @@ The JSON envelope is:
 |---|---|
 | `experiment` | full experiment record |
 | `sync_request` | `{since}` |
+| `control_sync_request` | `{since}` for signed control-event replay |
 | `pex_request` | `{}` |
 | `pex_response` | `{peer: ["host:port", ...]}` |
-| `challenge` | challenge event payload |
-| `challenge_response` | verifier response payload |
-| `dispute` | resolved dispute payload |
-| `verification` | successful spot-check payload |
+| `challenge` | signed control event |
+| `challenge_response` | signed control event |
+| `dispute` | signed control event |
+| `verification` | signed control event |
 | `profile` | full node profile record |
 | `code_request` | `{code_cid}` |
 | `code_response` | `{code_cid, code}` with base64 payload |
@@ -267,7 +268,15 @@ Challenge, challenge-response, dispute, verification, and profile messages all u
 - message-type plus `event_id` dedupe
 - fan-out rebroadcast to peers except the source
 
-This allows reputation-relevant state to converge even when nodes are not directly connected to the original sender.
+For challenge, challenge-response, dispute, and verification:
+
+- the payload is a signed `SignedControlEvent`
+- the event type must match the wire message type
+- the event id must verify against canonical bytes
+- the Ed25519 signature must verify against `node_id`
+- the signer must match the actor field for that event type
+
+This prevents basic identity spoofing and lets reputation-relevant facts propagate safely across indirect peer topologies.
 
 ### 7.5 Peer Exchange
 
@@ -277,13 +286,16 @@ Discovered peers are persisted in `known_peer`.
 
 ### 7.6 Sync
 
-The current sync path exchanges experiments by timestamp:
+The current sync path has two replay streams:
 
-1. send `sync_request`
+1. `sync_request`
 2. peer replies by streaming experiment records newer than `since`
 3. receiver inserts each valid record
+4. `control_sync_request`
+5. peer replies by streaming signed control events newer than `since`
+6. receiver verifies, stores, applies, and regossips each valid event
 
-Artifact and profile state are not part of the same historical sync stream today. Artifacts are pulled on demand or prefetched when experiments arrive.
+Artifacts are still pulled on demand or prefetched when experiments arrive. Profiles remain live-gossiped rather than historically replayed.
 
 ## 8. Node Lifecycle
 
@@ -292,12 +304,13 @@ Implementation: [`spore/node.py`](../spore/node.py)
 At startup a node:
 
 1. loads or creates identity
-2. opens graph, artifact, reputation, and profile stores
+2. opens graph, artifact, profile, control-event, and reputation stores
 3. starts the gossip server
 4. connects to configured, known, or bootstrap peers
 5. requests peer exchange
 6. requests graph sync
-7. republishes its local profile if one exists
+7. requests signed control-event replay
+8. republishes its local profile if one exists
 
 ## 9. Autonomous Experiment Loop
 
@@ -390,7 +403,6 @@ If a rerun is within tolerance:
 
 - the experiment is marked verified
 - the publisher gains verification credit
-- the verifier gains credit for performing the rerun
 - a `verification` event is broadcast
 
 ## 12. Challenge Protocol
@@ -445,6 +457,8 @@ Outcomes:
 
 Dispute and verification effects are applied through shared event handlers so they can be processed exactly once across the mesh.
 
+Challenge and challenge-response events are also stored durably even when they do not directly move score, so offline peers can replay the same dispute context later.
+
 ## 13. Reputation
 
 Implementation: [`spore/reputation.py`](../spore/reputation.py)
@@ -472,11 +486,13 @@ If the same propagated event is seen again, it is ignored.
 |---|---|
 | verified `keep` | `+1.0` |
 | verified frontier `keep` | `+2.0` |
-| verified `discard` | `+0.3` |
-| verified `crash` | `+0.1` |
-| verification performed | `+0.5` |
-| dispute won | `+1.0` |
-| dispute lost | `-5.0` |
+| verified `discard` | `+0.0` |
+| verified `crash` | `+0.0` |
+| routine verification performed | `+0.0` |
+| successful challenge | `+1.0` |
+| verifier on winning dispute side | `+0.5` |
+| wrong dispute side | `-1.0` |
+| rejected publisher | `-5.0` |
 
 Publishing increments the `experiments_published` counter but does not directly change score.
 

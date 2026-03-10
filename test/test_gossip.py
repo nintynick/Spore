@@ -8,7 +8,9 @@ from test.conftest import make_record
 
 import pytest
 
+from spore.control import SignedControlEvent
 from spore.gossip import GossipServer
+from spore.record import generate_keypair
 from spore.wire import MessageType, encode_message, read_message
 
 
@@ -208,6 +210,138 @@ class TestGossipServer:
         await asyncio.sleep(0.3)
 
         assert len(received) == 2
+
+        await server.stop()
+        await client.stop()
+
+    @pytest.mark.asyncio
+    async def test_control_sync_request_handler(self, keypair):
+        received = []
+        sk, node_id = keypair
+        events = []
+
+        for index in range(2):
+            event = SignedControlEvent(
+                type=MessageType.VERIFICATION,
+                payload={
+                    "event_id": f"verification:{index}",
+                    "experiment_id": f"exp-{index}",
+                    "verified_node_id": "publisher",
+                    "verifier_id": node_id,
+                    "is_frontier": False,
+                },
+                node_id=node_id,
+                timestamp=100 + index,
+            )
+            event.sign(sk)
+            events.append(event)
+
+        server = GossipServer(
+            host="127.0.0.1",
+            port=17482,
+            on_control_sync_request=lambda since: [
+                event for event in events if event.timestamp > since
+            ],
+        )
+        await server.start()
+
+        client = GossipServer(
+            host="127.0.0.1",
+            port=17483,
+            on_verification=lambda payload: received.append(payload["event_id"]),
+        )
+        await client.start()
+        await client.connect_to_peer("127.0.0.1", 17482)
+        await asyncio.sleep(0.1)
+
+        await client.request_control_sync("127.0.0.1:17482", since_timestamp=100)
+        await asyncio.sleep(0.2)
+
+        assert received == ["verification:1"]
+
+        await server.stop()
+        await client.stop()
+
+    @pytest.mark.asyncio
+    async def test_signed_control_event_is_received(self, keypair):
+        received = []
+        sk, node_id = keypair
+
+        server = GossipServer(
+            host="127.0.0.1",
+            port=17482,
+            on_challenge=lambda payload: received.append(payload),
+        )
+        await server.start()
+
+        client = GossipServer(host="127.0.0.1", port=17483)
+        await client.start()
+        await client.connect_to_peer("127.0.0.1", 17482)
+        await asyncio.sleep(0.1)
+
+        event = SignedControlEvent(
+            type=MessageType.CHALLENGE,
+            payload={
+                "event_id": "challenge:exp:node",
+                "experiment_id": "exp",
+                "challenger_id": node_id,
+                "challenger_gpu": "RTX_3060",
+            },
+            node_id=node_id,
+        )
+        event.sign(sk)
+
+        msg = encode_message(MessageType.CHALLENGE, event.to_dict())
+        for _, (_, writer) in client.peers.items():
+            writer.write(msg)
+            await writer.drain()
+
+        await asyncio.sleep(0.2)
+
+        assert len(received) == 1
+        assert received[0]["challenger_id"] == node_id
+
+        await server.stop()
+        await client.stop()
+
+    @pytest.mark.asyncio
+    async def test_signed_control_event_with_actor_mismatch_is_dropped(self):
+        received = []
+        sk, node_id = generate_keypair()
+        _, other_node_id = generate_keypair()
+
+        server = GossipServer(
+            host="127.0.0.1",
+            port=17484,
+            on_challenge=lambda payload: received.append(payload),
+        )
+        await server.start()
+
+        client = GossipServer(host="127.0.0.1", port=17485)
+        await client.start()
+        await client.connect_to_peer("127.0.0.1", 17484)
+        await asyncio.sleep(0.1)
+
+        event = SignedControlEvent(
+            type=MessageType.CHALLENGE,
+            payload={
+                "event_id": "challenge:exp:other",
+                "experiment_id": "exp",
+                "challenger_id": other_node_id,
+                "challenger_gpu": "RTX_3060",
+            },
+            node_id=node_id,
+        )
+        event.sign(sk)
+
+        msg = encode_message(MessageType.CHALLENGE, event.to_dict())
+        for _, (_, writer) in client.peers.items():
+            writer.write(msg)
+            await writer.drain()
+
+        await asyncio.sleep(0.2)
+
+        assert received == []
 
         await server.stop()
         await client.stop()

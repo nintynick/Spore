@@ -8,6 +8,13 @@ from pathlib import Path
 
 from .record import ExperimentRecord, Status
 
+VERIFIED_KEEP_REWARD = 1.0
+VERIFIED_FRONTIER_KEEP_REWARD = 2.0
+SUCCESSFUL_CHALLENGE_REWARD = 1.0
+WINNING_VERIFIER_REWARD = 0.5
+WRONG_DISPUTE_SIDE_PENALTY = -1.0
+REJECTED_EXPERIMENT_PENALTY = -5.0
+
 REPUTATION_SCHEMA = """
 CREATE TABLE IF NOT EXISTS reputation (
     node_id     TEXT PRIMARY KEY,
@@ -77,15 +84,19 @@ class ReputationStore:
             )
         self.conn.commit()
 
-    def record_published(self, node_id: str, record: ExperimentRecord):
-        """Update reputation when a node publishes an experiment."""
-        del record
+    def increment_counter(self, node_id: str, field: str):
+        """Increment a non-score reputation counter."""
         self._ensure_node(node_id)
         self.conn.execute(
-            "UPDATE reputation SET experiments_published = experiments_published + 1 WHERE node_id = ?",
+            f"UPDATE reputation SET {field} = {field} + 1 WHERE node_id = ?",
             (node_id,),
         )
         self.conn.commit()
+
+    def record_published(self, node_id: str, record: ExperimentRecord):
+        """Update reputation when a node publishes an experiment."""
+        del record
+        self.increment_counter(node_id, "experiments_published")
 
     def record_verified(
         self, node_id: str, record: ExperimentRecord, is_frontier: bool = False
@@ -96,28 +107,46 @@ class ReputationStore:
             if isinstance(record.status, Status)
             else Status(record.status)
         )
+        delta = 0.0
         if status == Status.KEEP:
-            delta = 2.0 if is_frontier else 1.0
-        elif status == Status.DISCARD:
-            delta = 0.3
-        else:
-            delta = 0.1
+            delta = (
+                VERIFIED_FRONTIER_KEEP_REWARD if is_frontier else VERIFIED_KEEP_REWARD
+            )
         self.update_score(node_id, delta, "experiments_verified")
 
     def verification_performed(self, verifier_id: str):
-        """Reward a node for performing a verification."""
-        self.update_score(verifier_id, 0.5, "verifications_performed")
+        """Track that a node performed a verification without changing score."""
+        self.increment_counter(verifier_id, "verifications_performed")
 
-    def dispute_resolved(self, winner_id: str, loser_id: str):
-        """Update reputation after a dispute is resolved."""
-        if winner_id:
-            self.update_score(winner_id, 1.0, "disputes_won")
-        if loser_id:
-            self.update_score(loser_id, -5.0, "disputes_lost")
+    def reward_successful_challenge(self, challenger_id: str):
+        """Reward a challenger who exposed a bad claim."""
+        self.update_score(challenger_id, SUCCESSFUL_CHALLENGE_REWARD, "disputes_won")
+
+    def reward_winning_verifier(self, verifier_id: str):
+        """Reward a verifier on the correct side of a resolved dispute."""
+        self.update_score(verifier_id, WINNING_VERIFIER_REWARD, "disputes_won")
+
+    def penalize_wrong_dispute_side(self, node_id: str):
+        """Penalize a challenger or verifier that was wrong in dispute resolution."""
+        self.update_score(node_id, WRONG_DISPUTE_SIDE_PENALTY, "disputes_lost")
+
+    def penalize_rejected_experiment(self, node_id: str):
+        """Strong penalty for a published claim rejected by dispute."""
+        self.update_score(node_id, REJECTED_EXPERIMENT_PENALTY, "disputes_lost")
 
     def leaderboard(self, limit: int = 20) -> list[dict]:
         rows = self.conn.execute(
             "SELECT * FROM reputation ORDER BY score DESC LIMIT ?", (limit,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def all_stats(self) -> list[dict]:
+        """Return all known reputation rows in a stable order."""
+        rows = self.conn.execute(
+            """
+            SELECT * FROM reputation
+            ORDER BY score DESC, experiments_published DESC, node_id ASC
+            """
         ).fetchall()
         return [dict(r) for r in rows]
 

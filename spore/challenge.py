@@ -29,6 +29,7 @@ from .verify import (
     VerificationResult,
     Verifier,
 )
+from .wire import MessageType
 
 log = logging.getLogger(__name__)
 
@@ -113,7 +114,8 @@ class ChallengeCoordinator:
                 "is_frontier": record.id in {r.id for r in self._node.graph.frontier()},
             }
             self.on_verification(payload)
-            await self._node.gossip.broadcast_verification(payload)
+            signed = self._node.make_control_event(MessageType.VERIFICATION, payload)
+            await self._node.gossip.broadcast_verification(signed)
             return
 
         # Result differs — initiate challenge
@@ -149,7 +151,8 @@ class ChallengeCoordinator:
         )
         self._pending[record.id] = challenge
         self.on_challenge(payload)
-        await self._node.gossip.broadcast_challenge(payload)
+        signed = self._node.make_control_event(MessageType.CHALLENGE, payload)
+        await self._node.gossip.broadcast_challenge(signed)
 
         # Wait for verifier responses, then resolve
         asyncio.create_task(self._await_resolution(record.id))
@@ -220,7 +223,8 @@ class ChallengeCoordinator:
 
         # Broadcast response so challenger (and everyone) sees it
         self.on_challenge_response(response)
-        await self._node.gossip.broadcast_challenge_response(response)
+        signed = self._node.make_control_event(MessageType.CHALLENGE_RESPONSE, response)
+        await self._node.gossip.broadcast_challenge_response(signed)
         log.info(
             "Verification of %s complete: val_bpb=%.6f",
             record.id[:8],
@@ -311,6 +315,11 @@ class ChallengeCoordinator:
         if self._node:
             if dispute.outcome == DisputeOutcome.UPHELD:
                 self._node.graph.mark_verified(experiment_id, True)
+            winner_verifier_ids, loser_verifier_ids = _classify_verifier_sides(
+                pending.experiment,
+                dispute,
+                self.verifier.get_tolerance(pending.experiment.gpu_model),
+            )
             payload = {
                 "event_id": f"dispute:{dispute.experiment_id}:{dispute.challenger_id}",
                 "experiment_id": dispute.experiment_id,
@@ -320,9 +329,12 @@ class ChallengeCoordinator:
                 "outcome": dispute.outcome.value,
                 "ground_truth_bpb": dispute.ground_truth_bpb,
                 "verifier_count": len(dispute.verifier_result),
+                "winner_verifier_ids": winner_verifier_ids,
+                "loser_verifier_ids": loser_verifier_ids,
             }
             self.on_dispute(payload)
-            await self._node.gossip.broadcast_dispute(payload)
+            signed = self._node.make_control_event(MessageType.DISPUTE, payload)
+            await self._node.gossip.broadcast_dispute(signed)
 
     def on_verification(self, payload: dict):
         """Apply a successful spot-check network-wide."""
@@ -332,20 +344,17 @@ class ChallengeCoordinator:
 
     def on_dispute(self, payload: dict):
         """Called when a resolved dispute arrives from the network."""
-        outcome = payload.get("outcome", "")
         experiment_id = payload.get("experiment_id", "")
         if self._node is None:
             return
         if not apply_dispute_event(self._node, self.verifier, payload):
             return
-
         log.info(
             "Dispute result for %s: %s (ground_truth=%.6f)",
             experiment_id[:8],
-            outcome,
-            payload.get("ground_truth_bpb", 0),
+            payload.get("outcome", ""),
+            payload.get("ground_truth_bpb", 0.0),
         )
-        # Clean up if we had a pending challenge for this
         self._pending.pop(experiment_id, None)
 
     async def _get_code_bytes(self, record: ExperimentRecord) -> bytes | None:
@@ -358,3 +367,19 @@ class ChallengeCoordinator:
             return code_bytes
 
         return await self._node.fetch_code(record.code_cid)
+
+
+def _classify_verifier_sides(
+    record: ExperimentRecord, dispute, tolerance: float
+) -> tuple[list[str], list[str]]:
+    """Split verifier IDs by whether they aligned with the winning side."""
+    winner_ids: list[str] = []
+    loser_ids: list[str] = []
+    for result in dispute.verifier_result:
+        supports_original = abs(result.verifier_val_bpb - record.val_bpb) <= tolerance
+        if dispute.outcome == DisputeOutcome.UPHELD:
+            target = winner_ids if supports_original else loser_ids
+        else:
+            target = loser_ids if supports_original else winner_ids
+        target.append(result.verifier_node_id)
+    return winner_ids, loser_ids

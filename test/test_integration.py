@@ -5,6 +5,7 @@ from test.conftest import make_record
 
 import pytest
 
+from spore.control import SignedControlEvent
 from spore.gossip import GossipServer
 from spore.graph import ResearchGraph
 from spore.record import Status, generate_keypair
@@ -164,6 +165,10 @@ class TestTwoNodeGossip:
     async def test_control_message_fan_out(self):
         """Challenge/verification/dispute events should re-gossip beyond one hop."""
         seen_by_c: list[tuple[str, str]] = []
+        challenger_keypair = generate_keypair()
+        verifier_keypair = generate_keypair()
+        challenger_sk, challenger_id = challenger_keypair
+        verifier_sk, verifier_id = verifier_keypair
 
         server_a = GossipServer(host="127.0.0.1", port=18479)
         server_b = GossipServer(
@@ -199,38 +204,61 @@ class TestTwoNodeGossip:
         await server_c.connect_to_peer("127.0.0.1", 18480)
         await asyncio.sleep(0.1)
 
-        await server_a.broadcast_challenge(
-            {"event_id": "challenge:test", "experiment_id": "exp", "challenger_id": "a"}
+        challenge = SignedControlEvent(
+            type="challenge",
+            payload={
+                "event_id": "challenge:test",
+                "experiment_id": "exp",
+                "challenger_id": challenger_id,
+            },
+            node_id=challenger_id,
         )
-        await server_a.broadcast_challenge_response(
-            {
+        challenge.sign(challenger_sk)
+        await server_a.broadcast_challenge(challenge.to_dict())
+
+        response = SignedControlEvent(
+            type="challenge_response",
+            payload={
                 "event_id": "challenge_response:test",
                 "experiment_id": "exp",
-                "challenger_id": "a",
-                "verifier_id": "b",
+                "challenger_id": challenger_id,
+                "verifier_id": verifier_id,
                 "verifier_bpb": 1.0,
                 "verifier_gpu": "RTX_3060",
-            }
+            },
+            node_id=verifier_id,
         )
-        await server_a.broadcast_verification(
-            {
+        response.sign(verifier_sk)
+        await server_a.broadcast_challenge_response(response.to_dict())
+
+        verification = SignedControlEvent(
+            type="verification",
+            payload={
                 "event_id": "verification:test",
                 "experiment_id": "exp",
                 "verified_node_id": "pub",
-                "verifier_id": "b",
+                "verifier_id": verifier_id,
                 "is_frontier": False,
-            }
+            },
+            node_id=verifier_id,
         )
-        await server_a.broadcast_dispute(
-            {
+        verification.sign(verifier_sk)
+        await server_a.broadcast_verification(verification.to_dict())
+
+        dispute = SignedControlEvent(
+            type="dispute",
+            payload={
                 "event_id": "dispute:test",
                 "experiment_id": "exp",
-                "challenger_id": "a",
+                "challenger_id": challenger_id,
                 "original_node_id": "pub",
                 "outcome": "upheld",
                 "ground_truth_bpb": 1.0,
-            }
+            },
+            node_id=challenger_id,
         )
+        dispute.sign(challenger_sk)
+        await server_a.broadcast_dispute(dispute.to_dict())
         await asyncio.sleep(0.3)
 
         assert ("challenge", "challenge:test") in seen_by_c

@@ -203,6 +203,13 @@ class ResearchGraph:
         ).fetchall()
         return [self._row_to_record(r) for r in rows]
 
+    def verified_ids(self) -> set[str]:
+        """Return all experiment CIDs currently marked as verified."""
+        rows = self.conn.execute(
+            "SELECT id FROM experiment WHERE verified = 1"
+        ).fetchall()
+        return {row["id"] for row in rows}
+
     def mark_verified(self, cid: str, verified: bool = True):
         """Mark an experiment as verified (or not)."""
         self.conn.execute(
