@@ -41,6 +41,28 @@ def test_remote_experiment_records_publish_without_storing_fake_code(tmp_path, k
     node.reputation.close()
 
 
+def test_remote_experiment_prefetches_artifact_from_source(
+    tmp_path, keypair, monkeypatch
+):
+    node = SporeNode(NodeConfig(port=0, data_dir=str(tmp_path)))
+    record = make_record(keypair, description="remote publish")
+    calls: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(
+        node.artifact,
+        "prefetch",
+        lambda owner, code_cid, preferred_peer=None: calls.append(
+            (code_cid, preferred_peer or "")
+        ),
+    )
+
+    node._on_remote_experiment(record, "peer:7470")
+
+    assert calls == [(record.code_cid, "peer:7470")]
+    node.graph.close()
+    node.reputation.close()
+
+
 @pytest.mark.asyncio
 async def test_start_requests_pex_before_sync(tmp_path, monkeypatch):
     node = SporeNode(NodeConfig(port=0, data_dir=str(tmp_path)))

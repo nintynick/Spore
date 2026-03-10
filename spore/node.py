@@ -19,6 +19,7 @@ import tomllib
 from nacl.encoding import HexEncoder
 from nacl.signing import SigningKey
 
+from .artifact_sync import ArtifactSync
 from .challenge import ChallengeCoordinator
 from .gossip import GossipServer
 from .gpu import normalize_gpu_model
@@ -91,6 +92,7 @@ class SporeNode:
         self.reputation = ReputationStore(self.data_dir / "db" / "reputation.sqlite")
         self.reputation.backfill_published(self.graph.all_records())
         self.training = TrainingRuntime()
+        self.artifact = ArtifactSync()
         # Verification
         self.verifier = Verifier(self.reputation)
         self.challenger = ChallengeCoordinator(
@@ -149,7 +151,9 @@ class SporeNode:
         (self.data_dir / "identity" / "node_id").write_text(pk_hex)
         return sk, pk_hex
 
-    def _on_remote_experiment(self, record: ExperimentRecord):
+    def _on_remote_experiment(
+        self, record: ExperimentRecord, source_addr: str | None = None
+    ):
         """Called when a remote experiment arrives via gossip."""
         inserted = self.graph.insert(record)
         if inserted:
@@ -161,6 +165,10 @@ class SporeNode:
                 record.status.value,
                 record.node_id[:8],
             )
+            if source_addr and self.store.get(record.code_cid) is None:
+                self.artifact.prefetch(
+                    self, record.code_cid, preferred_peer=source_addr
+                )
             # Spot-check if we have a workspace
             if self.workspace:
                 self.challenger.on_experiment_received(record)
@@ -206,36 +214,7 @@ class SporeNode:
 
     async def fetch_code(self, code_cid: str) -> bytes | None:
         """Try to fetch code by CID from any connected peer."""
-        import hashlib
-        import time
-
-        attempted: set[str] = set()
-        deadline = time.monotonic() + 20.0
-        while time.monotonic() < deadline:
-            pending = [
-                addr for addr in self.gossip.peers.keys() if addr not in attempted
-            ]
-            if not pending:
-                await asyncio.sleep(0.5)
-                continue
-
-            for addr in pending:
-                attempted.add(addr)
-                code_bytes = await self.gossip.request_code(addr, code_cid, timeout=5.0)
-                if code_bytes is None:
-                    continue
-
-                actual_cid = hashlib.sha256(code_bytes).hexdigest()
-                if actual_cid == code_cid:
-                    self.store.put(code_bytes)
-                    return code_bytes
-                log.warning(
-                    "Code CID mismatch from %s: expected %s, got %s",
-                    addr,
-                    code_cid[:8],
-                    actual_cid[:8],
-                )
-        return None
+        return await self.artifact.fetch(self, code_cid)
 
     async def start(self, *, skip_peer: bool = False):
         """Start the gossip server and connect to peers."""

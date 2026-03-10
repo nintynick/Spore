@@ -66,6 +66,11 @@ def init():
 @click.option("--peer", "-c", multiple=True, help="Peer address (host:port)")
 @click.option("--no-train", is_flag=True, help="Sync-only mode (no experiment runner)")
 @click.option(
+    "--verify-only",
+    is_flag=True,
+    help="Verifier-only mode (prepare workspace, verify remote experiments, no LLM loop)",
+)
+@click.option(
     "--genesis",
     is_flag=True,
     help="Genesis node: auto-prepare data, skip peer connection",
@@ -85,6 +90,7 @@ def run(
     web_port: int,
     peer: tuple[str, ...],
     no_train: bool,
+    verify_only: bool,
     genesis: bool,
     resource: int,
     data_dir: str | None,
@@ -121,7 +127,10 @@ def run(
 
     # Determine training mode
     should_train = False
-    if no_train:
+    should_verify = verify_only
+    if verify_only:
+        mode = "verifier-only"
+    elif no_train:
         mode = "sync-only"
     elif not Path("train.py").exists():
         mode = "sync-only (no train.py in current directory)"
@@ -161,7 +170,7 @@ def run(
         await node.start(skip_peer=genesis)
 
         # For non-genesis nodes, run data prep concurrently with peer sync
-        if should_train and not genesis:
+        if (should_train or should_verify) and not genesis:
             prepare_task = asyncio.create_task(asyncio.to_thread(_prepare_data_only))
         else:
             prepare_task = None
@@ -216,12 +225,17 @@ def run(
 
         try:
             can_train = should_train
-            if can_train and prepare_task:
+            can_verify = should_verify
+            if (can_train or can_verify) and prepare_task:
                 try:
                     await prepare_task
                 except Exception as e:
                     console.print(f"[red]Data preparation failed: {e}[/]")
                     can_train = False
+                    can_verify = False
+
+            if can_verify:
+                node.workspace = Path.cwd()
 
             if can_train:
                 from .loop import ExperimentLoop

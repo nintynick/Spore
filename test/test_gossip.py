@@ -1,17 +1,15 @@
 """Tests for gossip protocol — message encoding, server communication."""
 
+from __future__ import annotations
+
 import asyncio
 import json
 from test.conftest import make_record
 
 import pytest
 
-from spore.gossip import (
-    GossipServer,
-    MessageType,
-    encode_message,
-    read_message,
-)
+from spore.gossip import GossipServer
+from spore.wire import MessageType, encode_message, read_message
 
 
 class TestMessageEncoding:
@@ -54,12 +52,11 @@ class TestGossipServer:
 
     @pytest.mark.asyncio
     async def test_peer_connection(self):
-        received = []
-
-        def on_experiment(record):
-            received.append(record)
-
-        server = GossipServer(host="127.0.0.1", port=17470, on_experiment=on_experiment)
+        server = GossipServer(
+            host="127.0.0.1",
+            port=17470,
+            on_experiment=lambda record: None,
+        )
         await server.start()
 
         client = GossipServer(host="127.0.0.1", port=17471)
@@ -67,7 +64,6 @@ class TestGossipServer:
 
         connected = await client.connect_to_peer("127.0.0.1", 17470)
         assert connected
-
         await asyncio.sleep(0.1)
 
         await server.stop()
@@ -77,10 +73,11 @@ class TestGossipServer:
     async def test_broadcast_and_receive(self, keypair):
         received = []
 
-        def on_experiment(record):
-            received.append(record)
-
-        server = GossipServer(host="127.0.0.1", port=17472, on_experiment=on_experiment)
+        server = GossipServer(
+            host="127.0.0.1",
+            port=17472,
+            on_experiment=lambda record: received.append(record),
+        )
         await server.start()
 
         client = GossipServer(host="127.0.0.1", port=17473)
@@ -88,7 +85,6 @@ class TestGossipServer:
         await client.connect_to_peer("127.0.0.1", 17472)
         await asyncio.sleep(0.1)
 
-        # Broadcast an experiment
         record = make_record(keypair, val_bpb=0.95, description="test broadcast")
         await client.broadcast_experiment(record)
         await asyncio.sleep(0.2)
@@ -101,40 +97,40 @@ class TestGossipServer:
         await client.stop()
 
     @pytest.mark.asyncio
-    async def test_dedup_prevents_rebroadcast(self, keypair):
+    async def test_on_experiment_callback_can_receive_source_addr(self, keypair):
         received = []
 
-        def on_experiment(record):
-            received.append(record)
-
-        server = GossipServer(host="127.0.0.1", port=17474, on_experiment=on_experiment)
+        server = GossipServer(host="127.0.0.1", port=17474)
+        client = GossipServer(
+            host="127.0.0.1",
+            port=17475,
+            on_experiment=lambda record, addr: received.append((record, addr)),
+        )
         await server.start()
-
-        client = GossipServer(host="127.0.0.1", port=17475)
         await client.start()
         await client.connect_to_peer("127.0.0.1", 17474)
         await asyncio.sleep(0.1)
 
-        # Broadcast same record twice
-        record = make_record(keypair, description="dedup test")
-        await client.broadcast_experiment(record)
-        await client.broadcast_experiment(record)  # Should be deduped
+        record = make_record(keypair, description="with-source")
+        await server.broadcast_experiment(record)
         await asyncio.sleep(0.2)
 
-        # Server should only receive once
         assert len(received) == 1
+        assert received[0][0].id == record.id
+        assert received[0][1]
 
         await server.stop()
         await client.stop()
 
     @pytest.mark.asyncio
-    async def test_invalid_signature_dropped(self, keypair, second_keypair):
+    async def test_dedup_prevents_rebroadcast(self, keypair):
         received = []
 
-        def on_experiment(record):
-            received.append(record)
-
-        server = GossipServer(host="127.0.0.1", port=17476, on_experiment=on_experiment)
+        server = GossipServer(
+            host="127.0.0.1",
+            port=17476,
+            on_experiment=lambda record: received.append(record),
+        )
         await server.start()
 
         client = GossipServer(host="127.0.0.1", port=17477)
@@ -142,12 +138,35 @@ class TestGossipServer:
         await client.connect_to_peer("127.0.0.1", 17476)
         await asyncio.sleep(0.1)
 
-        # Create a record and tamper with it
+        record = make_record(keypair, description="dedup test")
+        await client.broadcast_experiment(record)
+        await client.broadcast_experiment(record)
+        await asyncio.sleep(0.2)
+
+        assert len(received) == 1
+
+        await server.stop()
+        await client.stop()
+
+    @pytest.mark.asyncio
+    async def test_invalid_signature_dropped(self, keypair):
+        received = []
+
+        server = GossipServer(
+            host="127.0.0.1",
+            port=17478,
+            on_experiment=lambda record: received.append(record),
+        )
+        await server.start()
+
+        client = GossipServer(host="127.0.0.1", port=17479)
+        await client.start()
+        await client.connect_to_peer("127.0.0.1", 17478)
+        await asyncio.sleep(0.1)
+
         record = make_record(keypair, description="tampered")
         record.description = "changed after signing"
-        # Don't re-sign — CID will be wrong
 
-        # Manually send it (bypass client dedup by giving it a fresh CID)
         msg = encode_message(MessageType.EXPERIMENT, json.loads(record.to_json()))
         for _, (_, writer) in client.peers.items():
             writer.write(msg)
@@ -155,7 +174,6 @@ class TestGossipServer:
 
         await asyncio.sleep(0.2)
 
-        # Server should drop it (invalid CID)
         assert len(received) == 0
 
         await server.stop()
@@ -163,38 +181,30 @@ class TestGossipServer:
 
     @pytest.mark.asyncio
     async def test_sync_request_handler(self, keypair):
-        """Test that sync_request returns experiments from the handler."""
+        received = []
         sync_records = [
             make_record(keypair, val_bpb=0.95, description="sync exp 1"),
             make_record(keypair, val_bpb=0.90, description="sync exp 2"),
         ]
-        received = []
-
-        def on_sync_request(since: int):
-            return sync_records
-
-        def on_experiment(record):
-            received.append(record)
 
         server = GossipServer(
             host="127.0.0.1",
-            port=17478,
-            on_experiment=lambda r: None,
-            on_sync_request=on_sync_request,
+            port=17480,
+            on_experiment=lambda record: None,
+            on_sync_request=lambda since: sync_records,
         )
         await server.start()
 
         client = GossipServer(
             host="127.0.0.1",
-            port=17479,
-            on_experiment=on_experiment,
+            port=17481,
+            on_experiment=lambda record: received.append(record),
         )
         await client.start()
-        await client.connect_to_peer("127.0.0.1", 17478)
+        await client.connect_to_peer("127.0.0.1", 17480)
         await asyncio.sleep(0.1)
 
-        # Request sync
-        await client.request_sync("127.0.0.1:17478", since_timestamp=0)
+        await client.request_sync("127.0.0.1:17480", since_timestamp=0)
         await asyncio.sleep(0.3)
 
         assert len(received) == 2

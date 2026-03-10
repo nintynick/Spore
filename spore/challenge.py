@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 
 from .challenge_state import (
@@ -22,7 +23,7 @@ from .challenge_state import (
     count_independent_verifiers,
 )
 from .gpu import normalize_gpu_model
-from .record import ExperimentRecord
+from .record import ExperimentRecord, Status
 from .verify import (
     DisputeOutcome,
     VerificationResult,
@@ -32,7 +33,7 @@ from .verify import (
 log = logging.getLogger(__name__)
 
 VERIFIER_COUNT = 3
-CHALLENGE_TIMEOUT = 600  # 10 min to collect verifier responses
+CHALLENGE_TIMEOUT = int(os.environ.get("SPORE_CHALLENGE_TIMEOUT", "1800"))
 
 
 class ChallengeCoordinator:
@@ -50,9 +51,19 @@ class ChallengeCoordinator:
 
     def on_experiment_received(self, record: ExperimentRecord):
         """Called when a new experiment arrives. Decides whether to spot-check."""
+        if record.status == Status.CRASH:
+            log.info("Skipping spot-check for %s: crash record", record.id[:8])
+            return
         if not self.verifier.should_verify(record):
+            log.info("Skipping spot-check for %s: probability gate", record.id[:8])
             return
         if not self.verifier.same_gpu_class(record.gpu_model, self.gpu_model):
+            log.info(
+                "Skipping spot-check for %s: incompatible GPU %s vs %s",
+                record.id[:8],
+                record.gpu_model,
+                self.gpu_model,
+            )
             return  # Can only verify same GPU class
         log.info("Spot-checking experiment %s...", record.id[:8])
         asyncio.create_task(self._run_spot_check(record))
@@ -153,8 +164,6 @@ class ChallengeCoordinator:
         if not self.verifier.reputation.record_event(event_id, "challenge"):
             return
 
-        self.verifier.reputation.verification_performed(challenger_id)
-
         if not self.verifier.same_gpu_class(challenger_gpu, self.gpu_model):
             return  # Can only verify same GPU class
         if challenger_id == self.node_id:
@@ -162,6 +171,12 @@ class ChallengeCoordinator:
 
         record = self._node.graph.get(experiment_id) if self._node else None
         if record is None:
+            return
+        if record.status == Status.CRASH:
+            log.info(
+                "Skipping challenge verification for %s: crash record",
+                experiment_id[:8],
+            )
             return
         if record.node_id == self.node_id:
             return  # Original publisher cannot serve as an independent verifier
@@ -268,6 +283,13 @@ class ChallengeCoordinator:
         if not pending.response:
             log.warning("No verifiers responded for challenge on %s", experiment_id[:8])
             return
+        if len(pending.response) < pending.required_responses:
+            log.warning(
+                "Challenge on %s timed out with %d/%d verifier responses",
+                experiment_id[:8],
+                len(pending.response),
+                pending.required_responses,
+            )
 
         # Resolve using median of all results
         dispute = self.verifier.resolve_dispute(

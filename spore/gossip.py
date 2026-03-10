@@ -7,6 +7,7 @@ Wire format: 4-byte big-endian length + UTF-8 JSON body.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 from collections.abc import Callable
@@ -43,6 +44,11 @@ class GossipServer:
         self.on_dispute = on_dispute
         self.on_verification = on_verification
         self.on_code_request = on_code_request
+        self._experiment_accepts_addr = False
+        if self.on_experiment is not None:
+            self._experiment_accepts_addr = (
+                len(inspect.signature(self.on_experiment).parameters) > 1
+            )
         self.peers: dict[str, tuple[asyncio.StreamReader, asyncio.StreamWriter]] = {}
         self.seen_cid: set[str] = set()
         self.seen_event: set[str] = set()
@@ -221,7 +227,10 @@ class GossipServer:
 
             self.seen_cid.add(record.id)
             if self.on_experiment:
-                self.on_experiment(record)
+                if self._experiment_accepts_addr:
+                    self.on_experiment(record, addr)
+                else:
+                    self.on_experiment(record)
 
             # Re-gossip to other peers (fan-out)
             await self._regossip(record, exclude=addr)
