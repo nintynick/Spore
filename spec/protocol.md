@@ -172,7 +172,7 @@ Each research node runs a continuous loop:
 ### 5.1 LLM Provider
 
 Nodes configure an LLM provider via `spore set <provider> <api_key>`. Supported providers:
-- Groq (`openai/gpt-oss-120b`)
+- Groq (`moonshotai/kimi-k2-instruct-0905`)
 - Anthropic (`claude-sonnet-4-5-20250929`)
 - OpenAI (`gpt-4o`)
 - xAI (`grok-3`)

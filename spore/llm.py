@@ -26,7 +26,11 @@ PROVIDER = {
         "Anthropic",
     ),
     "openai": ("https://api.openai.com/v1", "gpt-4o", "OpenAI"),
-    "groq": ("https://api.groq.com/openai/v1", "openai/gpt-oss-120b", "Groq"),
+    "groq": (
+        "https://api.groq.com/openai/v1",
+        "moonshotai/kimi-k2-instruct-0905",
+        "Groq",
+    ),
     "xai": ("https://api.x.ai/v1", "grok-3", "xAI"),
 }
 
