@@ -1,139 +1,144 @@
-# Spore Token Incentive Layer — Specification
+# Mycelia — Fungal Intelligence Network
+
+> *Trust the mycelium. The substrate provides.*
 
 ## Overview
 
-The Spore incentive layer adds an ERC-20 token economy on **Base L2** to
-coordinate contributions to the decentralized ML research network.  The design
-draws from two production models:
+Mycelia is the economic incentive layer for the Spore decentralized ML
+research network, deployed on **Base L2**. It uses a two-token fungal
+economy to coordinate contributions through a system modeled on real
+mycorrhizal networks — where underground fungal networks trade nutrients
+for mutual benefit.
 
-| Concept | Inspiration |
-|---------|-------------|
-| Patience-based maturation ("roasting") | MineBean ($BEAN on Base) |
-| Non-transferable contribution credits  | Semi-Sentients Society ($cSSS) |
-| Quality-weighted rewards               | SSS corvée system |
-| Staking-as-commitment                  | Both |
+| Concept | Biological Analog | Crypto Mechanic |
+|---------|-------------------|-----------------|
+| $MYCO | Mycelium (underground network) | Liquid ERC-20 |
+| $HYPHA | Hyphae (branching filaments) | Non-transferable contribution credits |
+| Inoculating | Planting spawn in substrate | Staking |
+| Harvesting | Picking mushrooms | Claiming rewards |
+| Fruiting cycle | Mushroom growth time | Maturation curve |
+| Blight | Fungal disease | Slashing |
+| Decomposition | Nutrient recycling | Fee redistribution |
+| First Flush | First mushroom harvest | Genesis epoch |
+| Canopy | Forest top | Leaderboard / frontier |
+
+Design inspired by MineBean (patience-based "roasting") and the
+Semi-Sentients Society (contribution credits with governance streaming).
 
 ## Tokens
 
-### $SPORE (Liquid ERC-20)
+### $MYCO — Mycelium Coin (Liquid)
 
 | Property | Value |
 |----------|-------|
 | Standard | ERC-20 + Burnable + Permit (EIP-2612) + Votes (ERC-5805) |
-| Chain    | Base (chain ID 8453) |
+| Chain | Base (chain ID 8453) |
 | Max Supply | 100,000,000 |
 | Decimals | 18 |
-| Minting  | Protocol-controlled via `MINTER_ROLE` (StakeManager contract) |
+| Minting | Protocol-controlled via Substrate contract |
 | Transfer | Unrestricted |
 
-**Uses:**
-- Stake to publish experiments (skin in the game)
-- Governance voting weight
-- Trading on DEXes
+**Uses:** Inoculate (stake) to participate, governance voting, DEX trading.
 
-### $xSPORE (Contribution Credits)
+### $HYPHA — Hypha Units (Soulbound)
 
 | Property | Value |
 |----------|-------|
 | Standard | Non-transferable ERC-20 (soulbound) + Votes |
-| Chain    | Base |
-| Supply   | Uncapped (inflationary, earned through work) |
-| Transfer | **Blocked** — only mint and burn |
+| Chain | Base |
+| Supply | Uncapped (earned through verified work) |
+| Transfer | **Blocked** — only growth and withering |
 
-**Uses:**
-- Tracks verified contributions to the research network
-- Burned to claim $SPORE (with maturation multiplier)
-- Governance weight proportional to contributions
+**Uses:** Tracks verified contributions; burned to harvest $MYCO; governance
+weight proportional to contribution.
 
 ## Reward Schedule
 
-| Event | $xSPORE Earned |
-|-------|---------------|
-| Verified `keep` experiment | 100 |
-| Verified frontier `keep`   | 200 |
-| Verification performed     | 50  |
-| Successful challenge       | 100 |
-| Winning verifier           | 25  |
+| Event | $HYPHA Grown | Biological Analog |
+|-------|-------------|-------------------|
+| Verified `keep` experiment | 100 | Healthy fruiting body |
+| Verified canopy experiment | 200 | Rare canopy specimen |
+| Spore print (verification) | 50 | Mycologist confirmed species |
+| Contamination catch | 100 | Caught toxic imposter |
+| Winning mycologist | 25 | Correct identification |
 
-## Penalty Schedule
+## Blight Schedule
 
-| Event | $xSPORE Burned | $SPORE Slashed |
-|-------|---------------|----------------|
-| Wrong dispute side | 50 | 50 |
-| Rejected experiment | 200 | 500 |
+| Event | $HYPHA Withered | $MYCO Blighted |
+|-------|----------------|----------------|
+| Bad identification | 50 | 50 |
+| Toxic fruiting (rejected) | 200 | 500 |
 
-## Staking
+## Inoculation Requirements
 
-| Requirement | $SPORE |
-|-------------|--------|
-| Publish experiment | 100 (minimum stake) |
-| Issue challenge    | 50 (minimum stake) |
+| Action | $MYCO Required |
+|--------|---------------|
+| Fruit an experiment (publish) | 100 minimum inoculation |
+| Contamination check (challenge) | 50 minimum inoculation |
 
-Staked $SPORE is locked in the StakeManager contract.  Slashing burns tokens
-permanently (deflationary pressure).
+## Fruiting Cycle (Maturation)
 
-## Maturation Curve (Claiming)
+The longer you let your hyphae fruit, the richer the harvest. Premature
+harvesting decomposes nutrients back into the substrate for patient cultivators.
 
-Inspired by MineBean's "roasting" mechanic.  When a node earns $xSPORE, the
-tokens enter a maturation period.  The longer you wait to claim, the better
-the $xSPORE → $SPORE conversion rate:
+| Fruiting Age | Harvest Yield | Decomposition |
+|-------------|---------------|---------------|
+| Premature (0 days) | 50% | 50% decomposes |
+| Young (7 days) | 75% | 25% decomposes |
+| Mature (14 days) | 90% | 10% decomposes |
+| Full maturity (30 days) | 100% | Nothing lost |
 
-| Wait Time | Conversion Rate | Claim Fee |
-|-----------|----------------|-----------|
-| Immediate | 50% | 50% |
-| 7 days    | 75% | 25% |
-| 14 days   | 90% | 10% |
-| 30 days   | 100% | 0%  |
+**Decomposition = Nature's recycling.** When an impatient cultivator harvests
+early, the decomposed nutrients flow proportionally to all other cultivators
+still patiently growing their hyphae.
 
-**Fee redistribution:**  Claim fees are redistributed proportionally to all
-other nodes still holding unclaimed $xSPORE.  This creates a "last to claim
-wins more" dynamic — patient contributors earn passive income from impatient
-claimers.
+## First Flush (Genesis)
 
-## Genesis Epoch
+The first **1,000 verified experiments** constitute the First Flush:
+- No inoculation required to fruit or challenge
+- Verified experiments grow $MYCO directly (+ $HYPHA)
+- Bootstraps the ecosystem without requiring pre-existing $MYCO
 
-The first **1,000 verified experiments** constitute the genesis epoch:
-- No staking requirement to publish or challenge
-- Verified experiments mint $SPORE directly (in addition to $xSPORE)
-- Bootstraps initial token distribution without requiring pre-existing $SPORE
-
-After genesis, staking is enforced and $SPORE can only be obtained by claiming
-matured $xSPORE or trading.
-
-**Bootstrap allocation:** 10,000,000 $SPORE (10% of max supply) minted to the
+**Substrate seeding:** 10,000,000 $MYCO (10% of max supply) seeded by
 deployer for initial DEX liquidity.
 
-## Smart Contracts
+## Smart Contracts (Foundry, Base L2)
 
-Three contracts deployed on Base:
+| Contract | Purpose |
+|----------|---------|
+| `MycoToken.sol` | ERC-20 $MYCO with AccessControl + Permit + Votes |
+| `HyphaToken.sol` | Soulbound $HYPHA with admin burn |
+| `Substrate.sol` | Inoculation, blight, fruiting, harvesting, decomposition |
 
-1. **SporeToken.sol** — ERC-20 with AccessControl, Permit, Votes, Burnable
-2. **ContributionToken.sol** — Non-transferable ERC-20 with admin burn
-3. **StakeManager.sol** — Staking, slashing, maturation, claiming, fee redistribution
+Deploy: `forge script script/Deploy.s.sol --rpc-url base_sepolia --broadcast`
 
-Deployment uses Foundry (`forge script`) targeting Base Sepolia (testnet) then
-Base mainnet.
+## CLI Commands
 
-## Integration with Spore Protocol
+```
+spore fungus balance      Show mycelium balances
+spore fungus inoculate    Inoculate $MYCO into the substrate
+spore fungus extract      Extract $MYCO from the substrate
+spore fungus harvest      Harvest matured fruiting bodies
+spore fungus canopy       View the canopy (top cultivators)
+spore fungus substrate    Global substrate health stats
+spore fungus log          Recent mycelium activity
+```
 
-The token layer integrates at these points:
+## API Endpoints
 
-| Spore Component | Integration |
-|-----------------|-------------|
-| `reputation.py` | Token rewards parallel reputation score changes |
-| `challenge_state.py` | Dispute resolution triggers token slashing |
-| `node.py` | TokenManager + RewardEngine initialized with node |
-| `cli.py` | `spore token` subcommands (balance, stake, claim, leaderboard) |
-| `explorer/server.py` | REST API endpoints for token data |
-
-The local token ledger (SQLite) mirrors on-chain state for development and
-offline operation.  On-chain settlement via Base L2 is opt-in.
+```
+GET /api/token/stats              Global substrate statistics
+GET /api/token/leaderboard        Canopy — top cultivators by $HYPHA
+GET /api/node/{id}/token          Cultivator token summary
+GET /api/node/{id}/token/history  Cultivator mycelium event history
+```
 
 ## Economic Properties
 
-- **Deflationary pressure:** Slashing burns $SPORE permanently
-- **Inflationary supply:** $xSPORE is uncapped, earned through useful work
-- **Hard cap:** $SPORE capped at 100M
-- **Patience reward:** Maturation curve incentivizes long-term holding
-- **Sybil cost:** Staking + compute cost of running experiments
-- **Quality signal:** Only verified experiments earn rewards; rejected ones are heavily penalized
+- **Deflationary:** Blight composts $MYCO permanently
+- **Inflationary supply:** $HYPHA grows uncapped through useful work
+- **Hard cap:** $MYCO maxes at 100M
+- **Patience premium:** Fruiting cycle rewards long-term cultivation
+- **Sybil cost:** Inoculation + compute cost of running experiments
+- **Quality signal:** Only verified experiments grow hyphae; toxic fruitings get blighted
+- **Nutrient cycling:** Decomposed harvest fees feed the patient

@@ -2,13 +2,13 @@
 pragma solidity ^0.8.26;
 
 import "forge-std/Script.sol";
-import "../src/SporeToken.sol";
-import "../src/ContributionToken.sol";
-import "../src/StakeManager.sol";
+import "../src/MycoToken.sol";
+import "../src/HyphaToken.sol";
+import "../src/Substrate.sol";
 
-/// @notice Deployment script for the Spore token incentive layer on Base.
+/// @notice Deployment script for the Mycelia fungal intelligence network on Base.
 ///         Usage: forge script script/Deploy.s.sol --rpc-url base_sepolia --broadcast
-contract DeploySpore is Script {
+contract DeployMycelia is Script {
     function run() external {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         address deployer = vm.addr(deployerPrivateKey);
@@ -16,24 +16,26 @@ contract DeploySpore is Script {
         vm.startBroadcast(deployerPrivateKey);
 
         // 1. Deploy tokens
-        SporeToken spore = new SporeToken(deployer);
-        ContributionToken xspore = new ContributionToken(deployer);
+        MycoToken myco = new MycoToken(deployer);
+        HyphaToken hypha = new HyphaToken(deployer);
 
-        // 2. Deploy StakeManager
-        StakeManager manager = new StakeManager(deployer, spore, xspore);
+        // 2. Deploy Substrate
+        Substrate substrate = new Substrate(deployer, myco, hypha);
 
-        // 3. Grant StakeManager the MINTER_ROLE on both tokens
-        spore.grantRole(spore.MINTER_ROLE(), address(manager));
-        xspore.grantRole(xspore.MINTER_ROLE(), address(manager));
-        xspore.grantRole(xspore.BURNER_ROLE(), address(manager));
+        // 3. Grant Substrate roles on both tokens
+        myco.grantRole(myco.MINTER_ROLE(), address(substrate));
+        hypha.grantRole(hypha.MINTER_ROLE(), address(substrate));
+        hypha.grantRole(hypha.BURNER_ROLE(), address(substrate));
 
-        // 4. Mint bootstrap allocation to deployer
-        spore.mint(deployer, 10_000_000 * 1e18);
+        // 4. Seed the substrate with initial $MYCO
+        myco.mint(deployer, 10_000_000 * 1e18);
 
         vm.stopBroadcast();
 
-        console.log("SporeToken:       ", address(spore));
-        console.log("ContributionToken:", address(xspore));
-        console.log("StakeManager:     ", address(manager));
+        console.log("MycoToken ($MYCO):   ", address(myco));
+        console.log("HyphaToken ($HYPHA): ", address(hypha));
+        console.log("Substrate:           ", address(substrate));
+        console.log("");
+        console.log("Trust the mycelium. The substrate provides.");
     }
 }

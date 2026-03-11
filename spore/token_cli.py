@@ -1,4 +1,4 @@
-"""CLI commands for the Spore token incentive layer."""
+"""CLI commands for the Mycelia fungal intelligence network."""
 
 from __future__ import annotations
 
@@ -30,148 +30,160 @@ def _close_node(node: SporeNode):
 
 def register_command(cli_group):
     @cli_group.group()
-    def token():
-        """Manage $SPORE and $xSPORE tokens."""
+    def fungus():
+        """Manage $MYCO and $HYPHA tokens — the fungal economy."""
         pass
 
-    @token.command("balance")
+    # Keep backward compat alias
+    @cli_group.group(name="token", hidden=True)
+    def token_alias():
+        """Alias for 'fungus'."""
+        pass
+
+    @fungus.command("balance")
     @click.option("--data-dir", "-d", default=None, help="Data directory")
-    def token_balance(data_dir: str | None):
-        """Show token balances for the local node."""
+    def fungus_balance(data_dir: str | None):
+        """Show mycelium balances for the local cultivator."""
         node = _make_node(data_dir)
         summary = node.token.node_summary(node.node_id)
 
-        table = Table(title="Token Balance", show_header=False, border_style="cyan")
+        table = Table(title="Mycelium Balance", show_header=False, border_style="green")
         table.add_column("Key", style="dim")
         table.add_column("Value")
-        table.add_row("Node", f"[cyan]{node.node_id[:16]}...[/]")
-        table.add_row("$SPORE", f"[green]{summary['spore_balance']:.2f}[/]")
-        table.add_row("$xSPORE", f"[yellow]{summary['xspore_balance']:.2f}[/]")
-        table.add_row("Staked", f"[red]{summary['staked']:.2f}[/]")
-        table.add_row("Pending Rewards", str(summary["pending_rewards"]))
-        table.add_row("Claimable $SPORE", f"[green]{summary['claimable_spore']:.2f}[/]")
-        table.add_row("Claim Fee", f"[dim]{summary['claim_fee']:.2f}[/]")
+        table.add_row("Cultivator", f"[cyan]{node.node_id[:16]}...[/]")
+        table.add_row("$MYCO", f"[green]{summary['myco_balance']:.2f}[/]")
+        table.add_row("$HYPHA", f"[yellow]{summary['hypha_balance']:.2f}[/]")
+        table.add_row("Inoculated", f"[red]{summary['inoculated']:.2f}[/]")
+        table.add_row("Fruiting Bodies", str(summary["fruiting_bodies"]))
+        table.add_row("Harvestable $MYCO", f"[green]{summary['harvestable_myco']:.2f}[/]")
+        table.add_row("Decomposition", f"[dim]{summary['decomposition_fee']:.2f}[/]")
         console.print(table)
         _close_node(node)
 
-    @token.command("stake")
+    @fungus.command("inoculate")
     @click.argument("amount", type=float)
     @click.option("--data-dir", "-d", default=None, help="Data directory")
-    def token_stake(amount: float, data_dir: str | None):
-        """Stake $SPORE to participate in the protocol."""
+    def fungus_inoculate(amount: float, data_dir: str | None):
+        """Inoculate $MYCO into the substrate (stake to participate)."""
         node = _make_node(data_dir)
-        if node.token.add_stake(node.node_id, amount):
-            console.print(f"Staked [green]{amount:.2f} $SPORE[/].")
+        if node.token.inoculate(node.node_id, amount):
+            console.print(f"Inoculated [green]{amount:.2f} $MYCO[/] into the substrate.")
             console.print(
-                f"Total staked: [green]{node.token.stake_amount(node.node_id):.2f}[/]"
+                f"Total inoculation: [green]{node.token.inoculation_amount(node.node_id):.2f}[/]"
             )
         else:
-            console.print("[red]Insufficient $SPORE balance to stake.[/]")
+            console.print("[red]Insufficient $MYCO to inoculate.[/]")
         _close_node(node)
 
-    @token.command("unstake")
+    @fungus.command("extract")
     @click.argument("amount", type=float)
     @click.option("--data-dir", "-d", default=None, help="Data directory")
-    def token_unstake(amount: float, data_dir: str | None):
-        """Unstake $SPORE."""
+    def fungus_extract(amount: float, data_dir: str | None):
+        """Extract $MYCO from the substrate (unstake)."""
         node = _make_node(data_dir)
-        if node.token.remove_stake(node.node_id, amount):
-            console.print(f"Unstaked [green]{amount:.2f} $SPORE[/].")
+        if node.token.extract(node.node_id, amount):
+            console.print(f"Extracted [green]{amount:.2f} $MYCO[/] from the substrate.")
         else:
-            console.print("[red]Insufficient staked amount.[/]")
+            console.print("[red]Insufficient inoculation to extract.[/]")
         _close_node(node)
 
-    @token.command("claim")
+    @fungus.command("harvest")
     @click.option("--data-dir", "-d", default=None, help="Data directory")
-    def token_claim(data_dir: str | None):
-        """Claim matured $xSPORE → $SPORE rewards."""
+    def fungus_harvest(data_dir: str | None):
+        """Harvest matured fruiting bodies: $HYPHA -> $MYCO."""
         node = _make_node(data_dir)
-        result = node.token.claim_rewards(node.node_id)
+        result = node.token.harvest(node.node_id)
         if result is None:
-            console.print("Nothing to claim.")
+            console.print("Nothing to harvest. The mycelium needs more time.")
         else:
-            console.print(f"Burned [yellow]{result.xspore_burned:.2f} $xSPORE[/]")
-            console.print(f"Minted [green]{result.spore_minted:.2f} $SPORE[/]")
-            if result.fee_paid > 0:
+            console.print(f"Consumed [yellow]{result.hypha_consumed:.2f} $HYPHA[/]")
+            console.print(f"Yielded  [green]{result.myco_yielded:.2f} $MYCO[/]")
+            if result.decomposed > 0:
                 console.print(
-                    f"Fee paid: [dim]{result.fee_paid:.2f}[/] "
-                    f"(redistributed to patient holders)"
+                    f"Decomposed: [dim]{result.decomposed:.2f}[/] "
+                    f"(recycled as nutrients to patient cultivators)"
                 )
         _close_node(node)
 
-    @token.command("leaderboard")
+    @fungus.command("canopy")
     @click.option("--limit", "-n", default=20, help="Number of entries")
     @click.option("--data-dir", "-d", default=None, help="Data directory")
-    def token_leaderboard(limit: int, data_dir: str | None):
-        """Show the token leaderboard."""
+    def fungus_canopy(limit: int, data_dir: str | None):
+        """Show the canopy — top cultivators by $HYPHA contribution."""
         node = _make_node(data_dir)
         entries = node.token.leaderboard(limit)
         if not entries:
-            console.print("No token data yet.")
+            console.print("The forest floor is empty. No cultivators yet.")
             _close_node(node)
             return
 
-        table = Table(title="Token Leaderboard", border_style="cyan")
+        table = Table(title="The Canopy", border_style="green")
         table.add_column("#", style="dim")
-        table.add_column("Node")
-        table.add_column("$xSPORE", justify="right")
-        table.add_column("$SPORE", justify="right")
-        table.add_column("Staked", justify="right")
+        table.add_column("Cultivator")
+        table.add_column("$HYPHA", justify="right")
+        table.add_column("$MYCO", justify="right")
+        table.add_column("Inoculated", justify="right")
 
         for i, entry in enumerate(entries, 1):
             table.add_row(
                 str(i),
                 f"[cyan]{entry['node_id'][:12]}...[/]",
-                f"[yellow]{entry['xspore']:.1f}[/]",
-                f"[green]{entry['spore']:.1f}[/]",
-                f"{entry['staked']:.1f}",
+                f"[yellow]{entry['hypha']:.1f}[/]",
+                f"[green]{entry['myco']:.1f}[/]",
+                f"{entry['inoculated']:.1f}",
             )
         console.print(table)
         _close_node(node)
 
-    @token.command("stats")
+    @fungus.command("substrate")
     @click.option("--data-dir", "-d", default=None, help="Data directory")
-    def token_stats(data_dir: str | None):
-        """Show global token statistics."""
+    def fungus_substrate(data_dir: str | None):
+        """Show global substrate statistics."""
         node = _make_node(data_dir)
         stats = node.token.global_stats()
 
-        table = Table(title="Global Token Stats", show_header=False, border_style="cyan")
+        table = Table(title="Substrate Health", show_header=False, border_style="green")
         table.add_column("Key", style="dim")
         table.add_column("Value")
-        table.add_row("Total $SPORE Minted", f"{stats['total_spore_minted']:,.2f}")
-        table.add_row("Total $SPORE Burned", f"{stats['total_spore_burned']:,.2f}")
-        table.add_row("Circulating $SPORE", f"[green]{stats['circulating_spore']:,.2f}[/]")
+        table.add_row("Total $MYCO Grown", f"{stats['total_myco_minted']:,.2f}")
+        table.add_row("Total $MYCO Composted", f"{stats['total_myco_composted']:,.2f}")
+        table.add_row("Circulating $MYCO", f"[green]{stats['circulating_myco']:,.2f}[/]")
         table.add_row("Max Supply", f"{stats['max_supply']:,}")
-        table.add_row("Genesis Experiments", str(stats["genesis_experiments"]))
+        table.add_row("Flush Count", str(stats["flush_count"]))
         table.add_row(
             "Epoch",
-            "[yellow]Genesis[/]" if stats["in_genesis_epoch"] else "Post-genesis",
+            "[yellow]First Flush[/]" if stats["in_first_flush"] else "Mature Growth",
         )
         console.print(table)
         _close_node(node)
 
-    @token.command("history")
+    @fungus.command("log")
     @click.option("--limit", "-n", default=20, help="Number of events")
     @click.option("--data-dir", "-d", default=None, help="Data directory")
-    def token_history(limit: int, data_dir: str | None):
-        """Show recent token events for the local node."""
+    def fungus_log(limit: int, data_dir: str | None):
+        """Show recent mycelium events for the local cultivator."""
         node = _make_node(data_dir)
         events = node.token.event_history(node.node_id, limit)
         if not events:
-            console.print("No token events yet.")
+            console.print("No mycelium events yet. The network is dormant.")
             _close_node(node)
             return
 
-        table = Table(title="Token Event History", border_style="cyan")
-        table.add_column("Kind")
+        table = Table(title="Mycelium Activity Log", border_style="green")
+        table.add_column("Event")
         table.add_column("Amount", justify="right")
         table.add_column("Detail", style="dim")
 
         for ev in events:
-            kind_color = "green" if "mint" in ev["kind"] or "reward" in ev["kind"] else "red"
+            kind = ev["kind"]
+            if "growth" in kind or "extend" in kind or "harvest" in kind:
+                color = "green"
+            elif "blight" in kind or "wither" in kind or "compost" in kind:
+                color = "red"
+            else:
+                color = "yellow"
             table.add_row(
-                f"[{kind_color}]{ev['kind']}[/]",
+                f"[{color}]{kind}[/]",
                 f"{ev['amount']:.2f}",
                 ev.get("detail", ""),
             )

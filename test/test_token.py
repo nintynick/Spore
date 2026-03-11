@@ -106,9 +106,9 @@ class TestMaturation:
         tm.mint_xspore("node_a", 100.0, "test")
         result = tm.claim_rewards("node_a")
         assert result is not None
-        assert result.xspore_burned == 100.0
-        assert result.spore_minted == pytest.approx(50.0, abs=0.01)
-        assert result.fee_paid == pytest.approx(50.0, abs=0.01)
+        assert result.hypha_consumed == 100.0
+        assert result.myco_yielded == pytest.approx(50.0, abs=0.01)
+        assert result.decomposed == pytest.approx(50.0, abs=0.01)
 
     def test_maturation_rate_tiers(self, tm):
         # _maturation_rate returns (conversion_rate, fee_rate) as decimals
@@ -132,17 +132,17 @@ class TestMaturation:
         assert xburned == 100.0
 
     def test_claim_fee_redistribution(self, tm):
-        # Two nodes with pending rewards
+        # Two cultivators with pending fruiting bodies
         tm.mint_xspore("node_a", 100.0, "test")
         tm.mint_xspore("node_b", 100.0, "test")
 
-        # node_a claims immediately — 50% fee should go to node_b
+        # node_a harvests immediately — 50% decomposes to node_b
         result = tm.claim_rewards("node_a")
         assert result is not None
-        assert result.fee_paid == pytest.approx(50.0, abs=0.01)
-        assert result.fee_redistributed == pytest.approx(50.0, abs=0.01)
+        assert result.decomposed == pytest.approx(50.0, abs=0.01)
+        assert result.nutrient_recycled == pytest.approx(50.0, abs=0.01)
 
-        # node_b should now have more xspore from redistribution
+        # node_b should have more hypha from nutrient recycling
         assert tm.xspore_balance("node_b") > 100.0
 
 
@@ -236,4 +236,4 @@ class TestQueries:
         tm.mint_spore("node_a", 100, "test_reason")
         history = tm.event_history("node_a")
         assert len(history) >= 1
-        assert history[0]["kind"] == "spore_mint"
+        assert history[0]["kind"] == "myco_growth"

@@ -7,23 +7,25 @@ import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Votes.sol";
 import "@openzeppelin/contracts/access/AccessControl.sol";
 
-/// @title SporeToken ($SPORE)
-/// @notice Liquid ERC-20 on Base L2 for the Spore decentralized AI research protocol.
-///         Minted through verified ML experiments, used for staking and governance.
-/// @dev Max supply capped at 100M. Minting restricted to MINTER_ROLE (StakeManager).
-contract SporeToken is ERC20, ERC20Burnable, ERC20Permit, ERC20Votes, AccessControl {
+/// @title MycoToken ($MYCO)
+/// @notice The underground network currency of the Mycelia fungal intelligence
+///         network on Base L2. Liquid ERC-20 minted through verified ML
+///         experiments, inoculated (staked) for participation, used for governance.
+///         "Trust the mycelium."
+/// @dev Max supply 100M. Minting restricted to MINTER_ROLE (Substrate contract).
+contract MycoToken is ERC20, ERC20Burnable, ERC20Permit, ERC20Votes, AccessControl {
     bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
 
-    uint256 public constant MAX_SUPPLY = 100_000_000 * 1e18; // 100M tokens
+    uint256 public constant MAX_SUPPLY = 100_000_000 * 1e18; // 100M $MYCO
 
     error MaxSupplyExceeded();
 
-    constructor(address admin) ERC20("Spore", "SPORE") ERC20Permit("Spore") {
+    constructor(address admin) ERC20("Mycelium Coin", "MYCO") ERC20Permit("Mycelium Coin") {
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
         _grantRole(MINTER_ROLE, admin);
     }
 
-    /// @notice Mint new $SPORE tokens. Only callable by MINTER_ROLE.
+    /// @notice Grow new $MYCO. Only callable by MINTER_ROLE.
     function mint(address to, uint256 amount) external onlyRole(MINTER_ROLE) {
         if (totalSupply() + amount > MAX_SUPPLY) revert MaxSupplyExceeded();
         _mint(to, amount);

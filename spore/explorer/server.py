@@ -684,28 +684,34 @@ def create_app(node: SporeNode) -> FastAPI:
                 row["display_name"] = profile.display_name
                 row["avatar_url"] = profile.avatar_url
             row["activity"] = _classify_node_activity(row)
-            # Attach token balances
+            # Attach mycelium balances
             if hasattr(node, "token"):
                 token_summary = node.token.node_summary(row["node_id"])
-                row["spore_balance"] = token_summary["spore_balance"]
-                row["xspore_balance"] = token_summary["xspore_balance"]
-                row["staked"] = token_summary["staked"]
+                row["myco_balance"] = token_summary["myco_balance"]
+                row["hypha_balance"] = token_summary["hypha_balance"]
+                row["inoculated"] = token_summary["inoculated"]
+                # backward compat
+                row["spore_balance"] = token_summary["myco_balance"]
+                row["xspore_balance"] = token_summary["hypha_balance"]
+                row["staked"] = token_summary["inoculated"]
         return rows
 
     # --- Token API ---
 
+    # --- Mycelia API ---
+
     @app.get("/api/token/stats")
-    async def token_stats():
-        """Global token statistics."""
+    async def substrate_stats():
+        """Global substrate health statistics."""
         if not hasattr(node, "token"):
-            return {"error": "token layer not enabled"}
+            return {"error": "mycelia layer not enabled"}
         return node.token.global_stats()
 
     @app.get("/api/token/leaderboard")
-    async def token_leaderboard(limit: int = 50):
-        """Token leaderboard by $xSPORE contribution balance."""
+    async def canopy(limit: int = 50):
+        """The Canopy — top cultivators by $HYPHA contribution."""
         if not hasattr(node, "token"):
-            return {"error": "token layer not enabled"}
+            return {"error": "mycelia layer not enabled"}
         entries = node.token.leaderboard(limit)
         for entry in entries:
             profile = node.get_profile(entry["node_id"])
@@ -715,17 +721,17 @@ def create_app(node: SporeNode) -> FastAPI:
         return entries
 
     @app.get("/api/node/{node_id}/token")
-    async def node_token(node_id: str):
-        """Token summary for a specific node."""
+    async def cultivator_summary(node_id: str):
+        """Cultivator mycelium summary."""
         if not hasattr(node, "token"):
-            return {"error": "token layer not enabled"}
+            return {"error": "mycelia layer not enabled"}
         return node.token.node_summary(node_id)
 
     @app.get("/api/node/{node_id}/token/history")
-    async def node_token_history(node_id: str, limit: int = 50):
-        """Token event history for a specific node."""
+    async def cultivator_history(node_id: str, limit: int = 50):
+        """Cultivator mycelium event history."""
         if not hasattr(node, "token"):
-            return {"error": "token layer not enabled"}
+            return {"error": "mycelia layer not enabled"}
         return node.token.event_history(node_id, limit)
 
     @app.get("/api/artifact/{cid}")
